@@ -1,0 +1,13 @@
+# Build output
+/parrot
+/dist/
+
+# Test and profiling artifacts
+*.test
+*.out
+*.prof
+
+# OS and editor clutter
+.DS_Store
+.idea/
+.vscode/
