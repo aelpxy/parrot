@@ -23,6 +23,9 @@ import (
 // Version is the protocol version spoken by this build.
 const Version = 1
 
+// maxMessageSize bounds one control message so a peer cannot make us buffer without limit.
+const maxMessageSize = 64 << 10
+
 // Kind identifies a control message.
 type Kind int
 
@@ -36,8 +39,13 @@ const (
 	KindError
 )
 
-// ErrUnexpectedMessage is returned when the peer sends a message out of order.
-var ErrUnexpectedMessage = errors.New("unexpected message")
+var (
+	// ErrUnexpectedMessage is returned when the peer sends a message out of order.
+	ErrUnexpectedMessage = errors.New("unexpected message")
+
+	// ErrMessageTooLarge is returned when a control message exceeds the size limit.
+	ErrMessageTooLarge = errors.New("control message too large")
+)
 
 // Message is a single control message; exactly one payload matching Kind is set.
 type Message struct {
@@ -83,11 +91,14 @@ func (e *RemoteError) Error() string { return e.Message }
 type Control struct {
 	enc *jsontext.Encoder
 	dec *jsontext.Decoder
+	lim *io.LimitedReader
 }
 
 // NewControl returns a Control reading from and writing to rw.
 func NewControl(rw io.ReadWriter) *Control {
-	return &Control{enc: jsontext.NewEncoder(rw), dec: jsontext.NewDecoder(rw)}
+	lim := &io.LimitedReader{R: rw}
+
+	return &Control{enc: jsontext.NewEncoder(rw), dec: jsontext.NewDecoder(lim), lim: lim}
 }
 
 // Send writes m.
@@ -101,8 +112,14 @@ func (c *Control) Send(m *Message) error {
 
 // Recv reads the next message.
 func (c *Control) Recv() (*Message, error) {
+	c.lim.N = maxMessageSize
+
 	var m Message
 	if err := json.UnmarshalDecode(c.dec, &m); err != nil {
+		if c.lim.N <= 0 {
+			return nil, ErrMessageTooLarge
+		}
+
 		return nil, fmt.Errorf("receive message: %w", err)
 	}
 

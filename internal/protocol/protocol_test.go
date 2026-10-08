@@ -3,8 +3,10 @@ package protocol_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"net"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aelpxy/parrot/internal/protocol"
@@ -53,6 +55,46 @@ func TestControlRequest(t *testing.T) {
 	var remote *protocol.RemoteError
 	if !errors.As(err, &remote) || remote.Message != "subdomain taken" {
 		t.Errorf("Request() error = %v, want RemoteError", err)
+	}
+}
+
+func TestControlRecvLimit(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		token   string
+		wantErr error
+	}{
+		{name: "small", token: "secret"},
+		{name: "oversized", token: strings.Repeat("A", 1<<20), wantErr: protocol.ErrMessageTooLarge},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+
+			msg := &protocol.Message{Kind: protocol.KindHello, Hello: &protocol.Hello{Token: tt.token, Version: protocol.Version}}
+			if err := protocol.NewControl(&buf).Send(msg); err != nil {
+				t.Fatalf("Send() error: %v", err)
+			}
+
+			ctrl := protocol.NewControl(struct {
+				io.Reader
+				io.Writer
+			}{&buf, io.Discard})
+
+			got, err := ctrl.Recv()
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Recv() error = %v, want %v", err, tt.wantErr)
+			}
+
+			if err == nil && got.Hello.Token != tt.token {
+				t.Errorf("Recv() token = %q, want %q", got.Hello.Token, tt.token)
+			}
+		})
 	}
 }
 
