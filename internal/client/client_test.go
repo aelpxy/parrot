@@ -212,20 +212,7 @@ func TestTCPTunnel(t *testing.T) {
 
 	echo := listen(t)
 
-	go func() {
-		for {
-			conn, err := echo.Accept()
-			if err != nil {
-				return
-			}
-
-			go func() {
-				defer func() { _ = conn.Close() }()
-
-				_, _ = io.Copy(conn, conn)
-			}()
-		}
-	}()
+	go serveEcho(echo)
 
 	h := startServer(t)
 	tunnels := h.startClient(t, tunnel.Spec{Name: "echo", Proto: tunnel.TCP, Target: echo.Addr().String()})
@@ -251,13 +238,17 @@ func TestTCPTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	buf := make([]byte, 4)
-	if _, err := io.ReadFull(conn, buf); err != nil {
+	if err := conn.(*net.TCPConn).CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
 
-	if string(buf) != "ping" {
-		t.Errorf("echo = %q, want %q", buf, "ping")
+	got, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(got) != "ping" {
+		t.Errorf("echo = %q, want %q", got, "ping")
 	}
 }
 
@@ -300,6 +291,24 @@ func listen(t *testing.T) net.Listener {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	return ln
+}
+
+// serveEcho replies with each request only after it ends, so half-closes must cross the tunnel.
+func serveEcho(ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+
+		go func() {
+			defer func() { _ = conn.Close() }()
+
+			if data, err := io.ReadAll(conn); err == nil {
+				_, _ = conn.Write(data)
+			}
+		}()
+	}
 }
 
 func closedAddr(t *testing.T) string {
