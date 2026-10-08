@@ -26,6 +26,9 @@ const (
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 90 * time.Second
 	shutdownTimeout   = 5 * time.Second
+	minAcceptDelay    = 5 * time.Millisecond
+	maxAcceptDelay    = time.Second
+	acceptDelayFactor = 2
 	maxNameAttempts   = 16
 	defaultHTTPPort   = "80"
 	defaultHTTPSPort  = "443"
@@ -292,7 +295,7 @@ func (s *Server) acceptSessions(ctx context.Context, ln net.Listener) error {
 	}()
 
 	for {
-		conn, err := ln.Accept()
+		conn, err := accept(ln, ctx.Done(), s.logger)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -304,6 +307,32 @@ func (s *Server) acceptSessions(ctx context.Context, ln net.Listener) error {
 		wg.Go(func() {
 			s.serveSession(ctx, conn)
 		})
+	}
+}
+
+// accept retries temporary failures such as fd exhaustion until ln is closed or stop fires.
+func accept(ln net.Listener, stop <-chan struct{}, logger *slog.Logger) (net.Conn, error) {
+	delay := minAcceptDelay
+
+	for {
+		conn, err := ln.Accept()
+		if err == nil {
+			return conn, nil
+		}
+
+		if errors.Is(err, net.ErrClosed) {
+			return nil, fmt.Errorf("accept: %w", err)
+		}
+
+		logger.Warn("accept failed, retrying", "error", err, "delay", delay)
+
+		select {
+		case <-stop:
+			return nil, fmt.Errorf("accept: %w", err)
+		case <-time.After(delay):
+		}
+
+		delay = min(delay*acceptDelayFactor, maxAcceptDelay)
 	}
 }
 

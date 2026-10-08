@@ -281,7 +281,7 @@ func (ss *session) bindTCP(ctx context.Context, b *protocol.Bind) (*protocol.Bou
 
 func (ss *session) acceptTCP(ln net.Listener, name string) {
 	for {
-		conn, err := ln.Accept()
+		conn, err := accept(ln, ss.mux.CloseChan(), ss.logger)
 		if err != nil {
 			return
 		}
