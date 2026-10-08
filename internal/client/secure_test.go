@@ -77,6 +77,41 @@ func TestAuth(t *testing.T) {
 	}
 }
 
+func TestReconnectStopsWhenRejected(t *testing.T) {
+	t.Parallel()
+
+	controlLn := listen(t)
+	controlAddr := controlLn.Addr().String()
+	stopFirst := serveOn(t, controlLn, &server.Options{AllowAnonymous: true})
+
+	online := make(chan []client.Tunnel, 1)
+	done := make(chan error, 1)
+	opts := &client.Options{Server: controlAddr, OnOnline: func(ts []client.Tunnel) { online <- ts }}
+
+	go func() {
+		done <- client.Run(t.Context(), opts, []tunnel.Spec{{Name: "web", Proto: tunnel.HTTP, Target: "localhost:1"}})
+	}()
+
+	waitFor(t, online)
+	stopFirst()
+
+	var lc net.ListenConfig
+
+	relisten, err := lc.Listen(t.Context(), "tcp", controlAddr)
+	if err != nil {
+		t.Skipf("could not rebind %s: %v", controlAddr, err)
+	}
+
+	t.Cleanup(func() { _ = relisten.Close() })
+
+	// The restarted server no longer accepts anonymous clients, as if the token had been revoked.
+	serveOn(t, relisten, &server.Options{Auth: fakeAuth{}})
+
+	if err := waitFor(t, done); !errors.Is(err, client.ErrRejected) {
+		t.Errorf("Run() error = %v, want ErrRejected", err)
+	}
+}
+
 func TestTLS(t *testing.T) {
 	t.Parallel()
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"strconv"
 	"sync"
@@ -27,7 +28,11 @@ const (
 	minBackoff       = 500 * time.Millisecond
 	maxBackoff       = 5 * time.Second
 	backoffFactor    = 2
+	jitterFraction   = 5
 )
+
+// ErrRejected is returned when the server refuses the handshake, e.g. for a revoked token; retrying cannot fix it.
+var ErrRejected = errors.New("rejected by server")
 
 // Options configures Run. The callbacks are optional and called from Run's goroutines.
 type Options struct {
@@ -85,7 +90,7 @@ func Check(ctx context.Context, opts *Options) error {
 }
 
 // Run exposes specs through the server until ctx is canceled, reconnecting after drops.
-// It fails fast if the very first connection or any bind is rejected.
+// It fails fast if the very first connection or any bind is rejected, and stops once the server refuses the handshake.
 func Run(ctx context.Context, opts *Options, specs []tunnel.Spec) error {
 	if err := checkNames(specs); err != nil {
 		return err
@@ -109,7 +114,7 @@ func Run(ctx context.Context, opts *Options, specs []tunnel.Spec) error {
 		default:
 		}
 
-		if !everOnline && !online {
+		if (!everOnline && !online) || errors.Is(err, ErrRejected) {
 			return err
 		}
 
@@ -119,16 +124,22 @@ func Run(ctx context.Context, opts *Options, specs []tunnel.Spec) error {
 			backoff = minBackoff
 		}
 
-		r.offline(err, backoff)
+		wait := jitter(backoff)
+		r.offline(err, wait)
 
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(backoff):
+		case <-time.After(wait):
 		}
 
 		backoff = min(backoff*backoffFactor, maxBackoff)
 	}
+}
+
+// jitter adds up to a fifth to d so clients don't all reconnect at once after a server restart.
+func jitter(d time.Duration) time.Duration {
+	return d + rand.N(d/jitterFraction)
 }
 
 // session runs one connection and reports whether its tunnels came online.
@@ -196,6 +207,10 @@ func (r *runner) handshake(mux *yamux.Session) (*protocol.Control, net.Conn, err
 	hello := &protocol.Message{Kind: protocol.KindHello, Hello: &protocol.Hello{Version: protocol.Version, Token: r.opts.Token}}
 
 	if _, err := ctrl.Request(hello, protocol.KindWelcome); err != nil {
+		if _, ok := errors.AsType[*protocol.RemoteError](err); ok {
+			return nil, nil, fmt.Errorf("handshake: %w: %w", ErrRejected, err)
+		}
+
 		return nil, nil, fmt.Errorf("handshake: %w", err)
 	}
 

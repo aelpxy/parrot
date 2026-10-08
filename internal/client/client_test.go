@@ -329,7 +329,7 @@ func TestReconnectKeepsSubdomain(t *testing.T) {
 
 	controlLn := listen(t)
 	controlAddr := controlLn.Addr().String()
-	stopFirst := serveOn(t, controlLn)
+	stopFirst := serveOn(t, controlLn, &server.Options{AllowAnonymous: true})
 
 	online := make(chan []client.Tunnel, 2)
 	offline := make(chan struct{}, 1)
@@ -367,7 +367,7 @@ func TestReconnectKeepsSubdomain(t *testing.T) {
 	}
 
 	t.Cleanup(func() { _ = relisten.Close() })
-	serveOn(t, relisten)
+	serveOn(t, relisten, &server.Options{AllowAnonymous: true})
 
 	second := waitFor(t, online)
 	if first[0].Spec.Subdomain == "" || first[0].Spec.Subdomain != second[0].Spec.Subdomain {
@@ -375,11 +375,14 @@ func TestReconnectKeepsSubdomain(t *testing.T) {
 	}
 }
 
-// serveOn runs a server on controlLn and returns a func that stops it and waits.
-func serveOn(t *testing.T, controlLn net.Listener) func() {
+// serveOn runs a server for opts on controlLn and returns a func that stops it and waits.
+func serveOn(t *testing.T, controlLn net.Listener, opts *server.Options) func() {
 	t.Helper()
 
-	srv, err := server.New(&server.Options{Domain: testDomain, TCPPorts: server.PortRange{First: 47000, Last: 47999}, AllowAnonymous: true})
+	opts.Domain = testDomain
+	opts.TCPPorts = server.PortRange{First: 47000, Last: 47999}
+
+	srv, err := server.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
