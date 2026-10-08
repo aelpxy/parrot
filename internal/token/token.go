@@ -12,12 +12,15 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aelpxy/parrot/internal/atomicfile"
 )
 
 const (
@@ -136,22 +139,11 @@ func (s *Store) path() string {
 
 // save writes tokens atomically so a concurrently running server never reads a partial file.
 func (s *Store) save(tokens []Token) error {
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
-		return fmt.Errorf("create data dir: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(s.Dir, ".tokens-*.json")
+	err := atomicfile.Write(s.path(), func(w io.Writer) error {
+		return json.MarshalWrite(w, tokens, jsontext.WithIndent("  "))
+	})
 	if err != nil {
-		return fmt.Errorf("create tokens file: %w", err)
-	}
-
-	err = errors.Join(json.MarshalWrite(tmp, tokens, jsontext.WithIndent("  ")), tmp.Close())
-	if err == nil {
-		err = os.Rename(tmp.Name(), s.path())
-	}
-
-	if err != nil {
-		return errors.Join(fmt.Errorf("write tokens: %w", err), os.Remove(tmp.Name()))
+		return fmt.Errorf("save tokens: %w", err)
 	}
 
 	return nil

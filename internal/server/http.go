@@ -91,3 +91,27 @@ func (t *httpTunnel) authorized(r *http.Request) bool {
 func (t *httpTunnel) close() {
 	t.transport.CloseIdleConnections()
 }
+
+func (s *Server) redirectHTTPS(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "https://"+hostOnly(r.Host)+s.publicPort+r.URL.RequestURI(), http.StatusMovedPermanently)
+}
+
+// ServeHTTP routes public requests to the tunnel matching the Host header.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	t := s.lookupHost(r.Host)
+	if t == nil {
+		writePage(w, http.StatusNotFound, "No tunnel is running at "+r.Host+".")
+
+		return
+	}
+
+	t.ServeHTTP(w, r)
+}
+
+func writePage(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+
+	// The client may already be gone; there is no one left to report a failed write to.
+	_, _ = w.Write([]byte("parrot: " + msg + "\n"))
+}

@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aelpxy/parrot/internal/atomicfile"
 	"golang.org/x/crypto/acme"
 )
 
@@ -361,11 +363,11 @@ func save(opts *Options, key *ecdsa.PrivateKey, chain [][]byte) error {
 
 	certFile, keyFile := Paths(opts.Dir, opts.Domain)
 
-	if err := writeAtomic(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})); err != nil {
+	if err := writeFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})); err != nil {
 		return err
 	}
 
-	return writeAtomic(certFile, certPEM)
+	return writeFile(certFile, certPEM)
 }
 
 // accountKey loads the ACME account key from dir, creating one on first use.
@@ -401,35 +403,24 @@ func accountKey(dir string) (crypto.Signer, error) {
 		return nil, fmt.Errorf("encode account key: %w", err)
 	}
 
-	if err := writeAtomic(path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})); err != nil {
+	if err := writeFile(path, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})); err != nil {
 		return nil, err
 	}
 
 	return key, nil
 }
 
-// writeAtomic writes data readable only by the owner, replacing path in one step.
-func writeAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
+// writeFile atomically replaces path with data, readable only by the owner.
+func writeFile(path string, data []byte) error {
+	err := atomicfile.Write(path, func(w io.Writer) error {
+		if _, err := w.Write(data); err != nil {
+			return fmt.Errorf("write: %w", err)
+		}
 
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create %s: %w", dir, err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".tmp-*")
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-
-	_, err = tmp.Write(data)
-
-	err = errors.Join(err, tmp.Close())
-	if err == nil {
-		err = os.Rename(tmp.Name(), path)
-	}
-
-	if err != nil {
-		return errors.Join(fmt.Errorf("write %s: %w", path, err), os.Remove(tmp.Name()))
+		return fmt.Errorf("save %s: %w", filepath.Base(path), err)
 	}
 
 	return nil

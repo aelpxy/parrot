@@ -3,10 +3,13 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/aelpxy/parrot/internal/atomicfile"
 )
 
 // Credentials are written by `parrot login`, kept apart from the hand-edited config file.
@@ -50,24 +53,11 @@ func LoadCredentials(path string) (Credentials, error) {
 
 // SaveCredentials atomically writes c to path, readable only by the current user.
 func SaveCredentials(path string, c Credentials) error {
-	dir := filepath.Dir(path)
-
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-
-	tmp, err := os.CreateTemp(dir, ".credentials-*.toml")
+	err := atomicfile.Write(path, func(w io.Writer) error {
+		return toml.NewEncoder(w).Encode(c)
+	})
 	if err != nil {
-		return fmt.Errorf("create credentials: %w", err)
-	}
-
-	err = errors.Join(toml.NewEncoder(tmp).Encode(c), tmp.Close())
-	if err == nil {
-		err = os.Rename(tmp.Name(), path)
-	}
-
-	if err != nil {
-		return errors.Join(fmt.Errorf("write credentials: %w", err), os.Remove(tmp.Name()))
+		return fmt.Errorf("save credentials: %w", err)
 	}
 
 	return nil

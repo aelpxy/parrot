@@ -8,17 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"net"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
-
-	"github.com/aelpxy/parrot/internal/tunnel"
 )
 
 const (
@@ -64,12 +60,6 @@ type Listeners struct {
 	HTTPS   net.Listener
 }
 
-// PortRange is an inclusive range of ports.
-type PortRange struct {
-	First int
-	Last  int
-}
-
 // Server forwards public traffic to connected clients.
 type Server struct {
 	logger     *slog.Logger
@@ -83,35 +73,6 @@ type Server struct {
 	ports    map[int]bool
 	sessions map[*session]struct{}
 	closing  bool
-}
-
-// ParsePortRange parses "30000-40000".
-func ParsePortRange(s string) (PortRange, error) {
-	first, last, ok := strings.Cut(s, "-")
-	if !ok {
-		return PortRange{}, fmt.Errorf("port range %q: expected first-last", s)
-	}
-
-	r := PortRange{}
-
-	var errFirst, errLast error
-
-	r.First, errFirst = strconv.Atoi(first)
-	r.Last, errLast = strconv.Atoi(last)
-
-	if errFirst != nil || errLast != nil || r.First < 1 || r.Last > 65535 || r.First > r.Last {
-		return PortRange{}, fmt.Errorf("port range %q: expected first-last within 1-65535", s)
-	}
-
-	return r, nil
-}
-
-func (r PortRange) String() string {
-	return strconv.Itoa(r.First) + "-" + strconv.Itoa(r.Last)
-}
-
-func (r PortRange) contains(port int) bool {
-	return port >= r.First && port <= r.Last
 }
 
 // New returns a Server for opts.
@@ -282,10 +243,6 @@ func (e httpEndpoint) serve() error {
 	return nil
 }
 
-func (s *Server) redirectHTTPS(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "https://"+hostOnly(r.Host)+s.publicPort+r.URL.RequestURI(), http.StatusMovedPermanently)
-}
-
 func (s *Server) acceptSessions(ctx context.Context, ln net.Listener) error {
 	var wg sync.WaitGroup
 
@@ -347,119 +304,6 @@ func (s *Server) closeSessions() {
 	}
 }
 
-// ServeHTTP routes public requests to the tunnel matching the Host header.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	t := s.lookupHost(r.Host)
-	if t == nil {
-		writePage(w, http.StatusNotFound, "No tunnel is running at "+r.Host+".")
-
-		return
-	}
-
-	t.ServeHTTP(w, r)
-}
-
-func (s *Server) lookupHost(hostport string) *httpTunnel {
-	sub, ok := strings.CutSuffix(strings.ToLower(hostOnly(hostport)), "."+s.domain)
-	if !ok || strings.Contains(sub, ".") {
-		return nil
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.hosts[sub]
-}
-
-// registerHost claims requested, or a random subdomain when requested is empty.
-func (s *Server) registerHost(requested string, t *httpTunnel) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if requested != "" {
-		if !tunnel.ValidSubdomain(requested) {
-			return "", fmt.Errorf("invalid subdomain %q", requested)
-		}
-
-		if _, taken := s.hosts[requested]; taken {
-			return "", fmt.Errorf("subdomain %q is %w", requested, ErrUnavailable)
-		}
-
-		s.hosts[requested] = t
-
-		return requested, nil
-	}
-
-	for range maxNameAttempts {
-		name := randomName()
-		if _, taken := s.hosts[name]; !taken {
-			s.hosts[name] = t
-
-			return name, nil
-		}
-	}
-
-	return "", errors.New("could not allocate a subdomain")
-}
-
-// listenTCP opens requested, or a random free port in range when requested is zero.
-func (s *Server) listenTCP(ctx context.Context, requested int) (net.Listener, int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	r := s.opts.TCPPorts
-
-	if requested != 0 {
-		if !r.contains(requested) {
-			return nil, 0, fmt.Errorf("port %d is outside the server's range %s", requested, r)
-		}
-
-		if s.ports[requested] {
-			return nil, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
-		}
-
-		ln, err := listenPort(ctx, requested)
-		if err != nil {
-			return nil, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
-		}
-
-		s.ports[requested] = true
-
-		return ln, requested, nil
-	}
-
-	size := r.Last - r.First + 1
-	start := rand.IntN(size)
-
-	for i := range size {
-		port := r.First + (start+i)%size
-		if s.ports[port] {
-			continue
-		}
-
-		if ln, err := listenPort(ctx, port); err == nil {
-			s.ports[port] = true
-
-			return ln, port, nil
-		}
-	}
-
-	return nil, 0, errors.New("no free tcp ports")
-}
-
-func (s *Server) release(subdomains []string, ports []int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, sub := range subdomains {
-		delete(s.hosts, sub)
-	}
-
-	for _, port := range ports {
-		delete(s.ports, port)
-	}
-}
-
 // shutdownHTTP drains requests, then force-closes connections that never sent one (e.g. browser preconnects).
 func shutdownHTTP(ctx context.Context, srv *http.Server) error {
 	err := srv.Shutdown(ctx)
@@ -476,17 +320,6 @@ func shutdownHTTP(ctx context.Context, srv *http.Server) error {
 	}
 
 	return nil
-}
-
-func listenPort(ctx context.Context, port int) (net.Listener, error) {
-	var lc net.ListenConfig
-
-	ln, err := lc.Listen(ctx, "tcp", net.JoinHostPort("", strconv.Itoa(port)))
-	if err != nil {
-		return nil, fmt.Errorf("listen tcp %d: %w", port, err)
-	}
-
-	return ln, nil
 }
 
 // publicPort returns ":port" for URLs, or "" when port is the scheme default.
@@ -506,14 +339,6 @@ func hostOnly(hostport string) string {
 	}
 
 	return host
-}
-
-func writePage(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(status)
-
-	// The client may already be gone; there is no one left to report a failed write to.
-	_, _ = w.Write([]byte("parrot: " + msg + "\n"))
 }
 
 func ignoreClosed(err error) error {
