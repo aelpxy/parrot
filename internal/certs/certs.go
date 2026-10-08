@@ -206,14 +206,12 @@ func waitForRecords(ctx context.Context, lookup func(context.Context, string) ([
 	ticker := time.NewTicker(dnsPollInterval)
 	defer ticker.Stop()
 
-	for {
-		missing := 0
+	var lastErr error
 
-		for _, r := range records {
-			values, _ := lookup(ctx, r.Name)
-			if !slices.Contains(values, r.Value) {
-				missing++
-			}
+	for {
+		missing, err := countMissing(ctx, lookup, records)
+		if err != nil {
+			lastErr = err
 		}
 
 		if missing == 0 {
@@ -226,21 +224,89 @@ func waitForRecords(ctx context.Context, lookup func(context.Context, string) ([
 
 		select {
 		case <-ctx.Done():
+			if lastErr != nil {
+				return fmt.Errorf("txt records not found in dns: %w (last lookup: %w)", ctx.Err(), lastErr)
+			}
+
 			return fmt.Errorf("txt records not found in dns: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-// authoritativeLookup queries one of domain's nameservers directly so cached negative answers don't delay us.
-func authoritativeLookup(ctx context.Context, domain string) (func(context.Context, string) ([]string, error), error) {
-	nss, err := net.DefaultResolver.LookupNS(ctx, domain)
-	if err != nil || len(nss) == 0 {
-		return nil, fmt.Errorf("find nameservers for %s: %w", domain, err)
+// errNoNameservers is returned when no name from the domain up to its parent zone has NS records.
+var errNoNameservers = errors.New("no nameservers found")
+
+// countMissing reports how many records are not yet published, and the last lookup failure if any.
+func countMissing(ctx context.Context, lookup func(context.Context, string) ([]string, error), records []Record) (int, error) {
+	var (
+		missing int
+		lastErr error
+	)
+
+	for _, r := range records {
+		values, err := lookup(ctx, r.Name)
+		if err != nil {
+			lastErr = err
+		}
+
+		if !slices.Contains(values, r.Value) {
+			missing++
+		}
 	}
 
-	server := net.JoinHostPort(strings.TrimSuffix(nss[0].Host, "."), dnsPort)
-	r := &net.Resolver{
+	return missing, lastErr
+}
+
+// authoritativeLookup queries the zone's nameservers directly so cached negative answers don't delay us.
+func authoritativeLookup(ctx context.Context, domain string) (func(context.Context, string) ([]string, error), error) {
+	nss, err := zoneNameservers(ctx, net.DefaultResolver.LookupNS, domain)
+	if err != nil {
+		return nil, err
+	}
+
+	resolvers := make([]*net.Resolver, 0, len(nss))
+	for _, ns := range nss {
+		resolvers = append(resolvers, resolverFor(net.JoinHostPort(strings.TrimSuffix(ns.Host, "."), dnsPort)))
+	}
+
+	return func(ctx context.Context, name string) ([]string, error) {
+		var errs []error
+
+		// A not-found answer is authoritative; only an unreachable nameserver moves on to the next.
+		for _, r := range resolvers {
+			values, err := r.LookupTXT(ctx, name)
+			if dnsErr, ok := errors.AsType[*net.DNSError](err); err == nil || (ok && dnsErr.IsNotFound) {
+				return values, nil
+			}
+
+			errs = append(errs, err)
+		}
+
+		return nil, fmt.Errorf("lookup %s: %w", name, errors.Join(errs...))
+	}, nil
+}
+
+// zoneNameservers walks up from domain to the closest name with NS records, since a subdomain usually has none of its own.
+func zoneNameservers(ctx context.Context, lookupNS func(context.Context, string) ([]*net.NS, error), domain string) ([]*net.NS, error) {
+	lastErr := errNoNameservers
+
+	for name := domain; strings.Contains(name, "."); _, name, _ = strings.Cut(name, ".") {
+		nss, err := lookupNS(ctx, name)
+		if err == nil && len(nss) > 0 {
+			return nss, nil
+		}
+
+		if err != nil {
+			lastErr = err
+		}
+	}
+
+	return nil, fmt.Errorf("find nameservers for %s: %w", domain, lastErr)
+}
+
+func resolverFor(server string) *net.Resolver {
+	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			var d net.Dialer
@@ -248,8 +314,6 @@ func authoritativeLookup(ctx context.Context, domain string) (func(context.Conte
 			return d.DialContext(ctx, network, server)
 		},
 	}
-
-	return r.LookupTXT, nil
 }
 
 func finalize(ctx context.Context, client *acme.Client, order *acme.Order, opts *Options) (*x509.Certificate, error) {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto"
 	"errors"
+	"net"
+	"slices"
 	"sync/atomic"
 	"testing"
 )
@@ -51,6 +53,49 @@ func TestWaitForRecordsCanceled(t *testing.T) {
 	err := waitForRecords(ctx, lookup, []Record{{Name: "x", Value: "y"}}, func(int) { cancel() })
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("waitForRecords() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestZoneNameservers(t *testing.T) {
+	t.Parallel()
+
+	zone := []*net.NS{{Host: "ns1.example.com."}}
+	notFound := &net.DNSError{Err: "no such host", IsNotFound: true}
+
+	tests := []struct {
+		name    string
+		domain  string
+		zones   map[string][]*net.NS
+		want    []*net.NS
+		wantErr bool
+	}{
+		{name: "apex", domain: "example.com", zones: map[string][]*net.NS{"example.com": zone}, want: zone},
+		{name: "subdomain in parent zone", domain: "tunnel.example.com", zones: map[string][]*net.NS{"example.com": zone}, want: zone},
+		{name: "delegated subdomain", domain: "tunnel.example.com", zones: map[string][]*net.NS{"tunnel.example.com": zone}, want: zone},
+		{name: "no zone", domain: "tunnel.example.com", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			lookupNS := func(_ context.Context, name string) ([]*net.NS, error) {
+				if nss, ok := tt.zones[name]; ok {
+					return nss, nil
+				}
+
+				return nil, notFound
+			}
+
+			got, err := zoneNameservers(t.Context(), lookupNS, tt.domain)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("zoneNameservers() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("zoneNameservers() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
