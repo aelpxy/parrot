@@ -1,8 +1,15 @@
 package server
 
-import "math/rand/v2"
+import (
+	cryptorand "crypto/rand"
+	"math/rand/v2"
+	"strings"
+)
 
-// randomName returns a memorable subdomain like "brave-otter".
+// suffixLen adds 40 random bits so live tunnels cannot be found by enumerating word pairs.
+const suffixLen = 8
+
+// randomName returns a memorable, unguessable subdomain like "brave-otter-k3j9x2mq".
 func randomName() string {
 	adjectives := [...]string{
 		"brave", "calm", "clever", "cosmic", "crisp", "eager", "fancy", "fuzzy",
@@ -18,5 +25,7 @@ func randomName() string {
 		"tapir", "toucan", "viper", "wombat", "yak", "zebra", "parrot", "moose",
 	}
 
-	return adjectives[rand.IntN(len(adjectives))] + "-" + animals[rand.IntN(len(animals))]
+	suffix := strings.ToLower(cryptorand.Text()[:suffixLen])
+
+	return adjectives[rand.IntN(len(adjectives))] + "-" + animals[rand.IntN(len(animals))] + "-" + suffix
 }

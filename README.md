@@ -6,7 +6,7 @@ Expose local services to the internet over HTTP(S) or raw TCP.
 $ parrot http 3000
  parrot   ● online
 
-  http-3000  https://brave-otter.tryparrot.site  → localhost:3000
+  http-3000  https://brave-otter-k3j9x2mq.tryparrot.site  → localhost:3000
 ```
 
 ## Install

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -156,5 +157,27 @@ func TestHTTPAuthWithEmptyUser(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+}
+
+func TestRandomSubdomainIsUnguessable(t *testing.T) {
+	t.Parallel()
+
+	control, public := listen(t), listen(t)
+	serve(t, &server.Options{AllowAnonymous: true}, server.Listeners{Control: control, HTTP: public})
+
+	ctrl, err := handshake(t, control.Addr().String(), &protocol.Hello{Version: protocol.Version})
+	if err != nil {
+		t.Fatalf("handshake error: %v", err)
+	}
+
+	reply, err := ctrl.Request(&protocol.Message{Kind: protocol.KindBind, Bind: &protocol.Bind{Name: "web", Proto: tunnel.HTTP}}, protocol.KindBound)
+	if err != nil {
+		t.Fatalf("bind error: %v", err)
+	}
+
+	want := regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z2-7]{8}$`)
+	if !want.MatchString(reply.Bound.Subdomain) {
+		t.Errorf("subdomain = %q, want adjective-animal-suffix", reply.Bound.Subdomain)
 	}
 }
