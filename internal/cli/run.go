@@ -116,8 +116,9 @@ func dialOptions(server, token string) *client.Options {
 	return opts
 }
 
+// isLoopback only trusts names that cannot resolve off-host, since plaintext exposes the token.
 func isLoopback(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if host == "localhost" {
 		return true
 	}
 
