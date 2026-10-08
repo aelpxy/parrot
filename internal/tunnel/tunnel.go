@@ -137,7 +137,7 @@ func (s *Spec) validateHTTP() []error {
 		errs = append(errs, fmt.Errorf("invalid subdomain %q: use lowercase letters, digits, and hyphens", s.Subdomain))
 	}
 
-	if s.Auth != "" && !strings.Contains(s.Auth, ":") {
+	if user, pass, ok := strings.Cut(s.Auth, ":"); s.Auth != "" && (!ok || user == "" || pass == "") {
 		errs = append(errs, errors.New("auth must be in user:pass form"))
 	}
 

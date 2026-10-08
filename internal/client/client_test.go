@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -152,7 +153,7 @@ func TestHTTPTunnel(t *testing.T) {
 	t.Parallel()
 
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, r.URL.Path+" host="+r.Host+" xff="+r.Header.Get("X-Forwarded-For"))
+		_, _ = io.WriteString(w, r.URL.Path+" host="+r.Host+" xff="+r.Header.Get("X-Forwarded-For")+" authorization="+strconv.Quote(r.Header.Get("Authorization")))
 	}))
 	t.Cleanup(app.Close)
 
@@ -181,6 +182,7 @@ func TestHTTPTunnel(t *testing.T) {
 		{name: "requires auth", tunnel: "private", wantStatus: http.StatusUnauthorized, wantBody: "authentication required"},
 		{name: "rejects wrong auth", tunnel: "private", auth: "admin:nope", wantStatus: http.StatusUnauthorized},
 		{name: "accepts auth and rewrites host", tunnel: "private", auth: "admin:secret", wantStatus: http.StatusOK, wantBody: "host=api.local"},
+		{name: "strips tunnel credentials", tunnel: "private", auth: "admin:secret", wantStatus: http.StatusOK, wantBody: `authorization=""`},
 		{name: "local app down", tunnel: "down", wantStatus: http.StatusBadGateway, wantBody: "nothing is listening"},
 	}
 

@@ -23,6 +23,7 @@ type httpTunnel struct {
 	transport *http.Transport
 	user      string
 	pass      string
+	auth      bool
 }
 
 func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *httpTunnel {
@@ -45,6 +46,11 @@ func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *h
 			if b.HostHeader != "" {
 				pr.Out.Host = b.HostHeader
 			}
+
+			// The visitor's credentials are for the tunnel, not the local app.
+			if b.Auth != "" {
+				pr.Out.Header.Del("Authorization")
+			}
 		},
 		Transport: transport,
 		ErrorLog:  slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
@@ -56,11 +62,11 @@ func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *h
 
 	user, pass, _ := strings.Cut(b.Auth, ":")
 
-	return &httpTunnel{proxy: proxy, transport: transport, user: user, pass: pass}
+	return &httpTunnel{proxy: proxy, transport: transport, user: user, pass: pass, auth: b.Auth != ""}
 }
 
 func (t *httpTunnel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if t.user != "" && !t.authorized(r) {
+	if t.auth && !t.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="parrot", charset="UTF-8"`)
 		writePage(w, http.StatusUnauthorized, "authentication required.")
 

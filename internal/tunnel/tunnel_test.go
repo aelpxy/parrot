@@ -64,6 +64,8 @@ func TestSpecNormalize(t *testing.T) {
 		{name: "bad target", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "nope"}, wantErr: true},
 		{name: "bad subdomain", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "localhost:1", Subdomain: "My_App"}, wantErr: true},
 		{name: "bad auth", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "localhost:1", Auth: "admin"}, wantErr: true},
+		{name: "auth without user", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "localhost:1", Auth: ":secret"}, wantErr: true},
+		{name: "auth without pass", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "localhost:1", Auth: "admin:"}, wantErr: true},
 		{name: "http remote port", spec: tunnel.Spec{Proto: tunnel.HTTP, Target: "localhost:1", RemotePort: 80}, wantErr: true},
 		{name: "tcp subdomain", spec: tunnel.Spec{Proto: tunnel.TCP, Target: "localhost:1", Subdomain: "x"}, wantErr: true},
 		{name: "tcp port range", spec: tunnel.Spec{Proto: tunnel.TCP, Target: "localhost:1", RemotePort: 70000}, wantErr: true},

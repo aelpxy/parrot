@@ -5,16 +5,22 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/yamux"
 
 	"github.com/aelpxy/parrot/internal/protocol"
 	"github.com/aelpxy/parrot/internal/server"
+	"github.com/aelpxy/parrot/internal/tunnel"
 )
 
-const testDomain = "parrot.test"
+const (
+	testDomain     = "parrot.test"
+	requestTimeout = 5 * time.Second
+)
 
 // flakyListener fails its first Accept the way an exhausted fd table does.
 type flakyListener struct {
@@ -76,8 +82,8 @@ func serve(t *testing.T, opts *server.Options, ls server.Listeners) {
 	})
 }
 
-// handshake opens a raw session to addr and sends hello.
-func handshake(t *testing.T, addr string, hello *protocol.Hello) error {
+// handshake opens a raw session to addr, sends hello, and returns the control stream.
+func handshake(t *testing.T, addr string, hello *protocol.Hello) (*protocol.Control, error) {
 	t.Helper()
 
 	var d net.Dialer
@@ -99,9 +105,10 @@ func handshake(t *testing.T, addr string, hello *protocol.Hello) error {
 		t.Fatal(err)
 	}
 
-	_, err = protocol.NewControl(stream).Request(&protocol.Message{Kind: protocol.KindHello, Hello: hello}, protocol.KindWelcome)
+	ctrl := protocol.NewControl(stream)
+	_, err = ctrl.Request(&protocol.Message{Kind: protocol.KindHello, Hello: hello}, protocol.KindWelcome)
 
-	return err
+	return ctrl, err
 }
 
 func TestServeSurvivesAcceptError(t *testing.T) {
@@ -110,7 +117,44 @@ func TestServeSurvivesAcceptError(t *testing.T) {
 	ln := &flakyListener{Listener: listen(t)}
 	serve(t, &server.Options{AllowAnonymous: true}, server.Listeners{Control: ln, HTTP: listen(t)})
 
-	if err := handshake(t, ln.Addr().String(), &protocol.Hello{Version: protocol.Version}); err != nil {
+	if _, err := handshake(t, ln.Addr().String(), &protocol.Hello{Version: protocol.Version}); err != nil {
 		t.Fatalf("handshake error: %v", err)
+	}
+}
+
+func TestHTTPAuthWithEmptyUser(t *testing.T) {
+	t.Parallel()
+
+	control, public := listen(t), listen(t)
+	serve(t, &server.Options{AllowAnonymous: true}, server.Listeners{Control: control, HTTP: public})
+
+	ctrl, err := handshake(t, control.Addr().String(), &protocol.Hello{Version: protocol.Version})
+	if err != nil {
+		t.Fatalf("handshake error: %v", err)
+	}
+
+	bind := &protocol.Bind{Name: "web", Proto: tunnel.HTTP, Subdomain: "private", Auth: ":secret"}
+	if _, err := ctrl.Request(&protocol.Message{Kind: protocol.KindBind, Bind: bind}, protocol.KindBound); err != nil {
+		t.Fatalf("bind error: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+public.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Host = "private." + testDomain
+
+	resp, err := (&http.Client{Timeout: requestTimeout}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
 	}
 }
