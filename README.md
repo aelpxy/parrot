@@ -25,14 +25,30 @@ CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o parrot ./cmd/parrot
 
 ## Use
 
-Point parrot at a server once, either with a token from its operator or anonymously if the server allows it:
+### Public server
+
+A public parrot server runs at `tryparrot.site` and accepts clients without a token, so you can try parrot without running your own:
 
 ```sh
-parrot login prt_... --server tryparrot.site    # with a token
-export PARROT_SERVER=tryparrot.site             # or anonymously
+export PARROT_SERVER=tryparrot.site
+parrot http 3000            # https://<random-name>.tryparrot.site
+parrot tcp 5432             # tcp://tryparrot.site:<port>
 ```
 
-Then:
+To use it by default, put `server = "tryparrot.site"` in `~/.config/parrot/config.toml` instead of exporting the variable.
+
+Anyone with the URL can reach your tunnel. Add `--auth user:pass` to require a login on HTTP tunnels, and don't expose anything you wouldn't put on the open internet. Subdomains requested with `-s` are first come, first served.
+
+### Other servers
+
+For a [server you run](#run-a-server) or someone else's, log in once with a token from its operator, or connect anonymously if it allows that:
+
+```sh
+parrot login prt_... --server example.com    # with a token
+export PARROT_SERVER=example.com             # or anonymously
+```
+
+### Commands
 
 ```sh
 parrot                      # pick a listening local port interactively
