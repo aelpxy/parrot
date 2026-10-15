@@ -3,10 +3,12 @@ package server_test
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -179,5 +181,53 @@ func TestRandomSubdomainIsUnguessable(t *testing.T) {
 	want := regexp.MustCompile(`^[a-z]+-[a-z]+-[a-z2-7]{8}$`)
 	if !want.MatchString(reply.Bound.Subdomain) {
 		t.Errorf("subdomain = %q, want adjective-animal-suffix", reply.Bound.Subdomain)
+	}
+}
+
+func TestLandingPage(t *testing.T) {
+	t.Parallel()
+
+	public := listen(t)
+	serve(t, &server.Options{AllowAnonymous: true}, server.Listeners{Control: listen(t), HTTP: public})
+
+	tests := []struct {
+		name       string
+		host       string
+		path       string
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "bare domain", host: testDomain, path: "/", wantStatus: http.StatusOK, wantBody: "export PARROT_SERVER=" + testDomain},
+		{name: "bare domain with port", host: testDomain + ":80", path: "/", wantStatus: http.StatusOK, wantBody: "export PARROT_SERVER=" + testDomain},
+		{name: "other path", host: testDomain, path: "/admin", wantStatus: http.StatusNotFound, wantBody: "No tunnel"},
+		{name: "unknown subdomain", host: "nope." + testDomain, path: "/", wantStatus: http.StatusNotFound, wantBody: "No tunnel"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+public.Addr().String()+tt.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req.Host = tt.host
+
+			resp, err := (&http.Client{Timeout: requestTimeout}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.StatusCode != tt.wantStatus || !strings.Contains(string(body), tt.wantBody) {
+				t.Errorf("got %d %q, want %d containing %q", resp.StatusCode, body, tt.wantStatus, tt.wantBody)
+			}
+		})
 	}
 }

@@ -67,6 +67,7 @@ type Server struct {
 	opts       Options
 	scheme     string
 	publicPort string
+	landing    []byte
 
 	mu       sync.Mutex
 	hosts    map[string]*httpTunnel
@@ -95,9 +96,15 @@ func New(opts *Options) (*Server, error) {
 		logger = slog.New(slog.DiscardHandler)
 	}
 
+	landing, err := renderLanding(domain, opts.AllowAnonymous)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Server{
 		logger:   logger,
 		domain:   domain,
+		landing:  landing,
 		opts:     *opts,
 		hosts:    make(map[string]*httpTunnel),
 		ports:    make(map[int]bool),

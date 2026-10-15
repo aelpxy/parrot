@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>parrot · {{.Domain}}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  p { margin: .75rem 0; }
+  pre { background: color-mix(in srgb, currentColor 8%, transparent); padding: .75rem 1rem; border-radius: 6px; overflow-x: auto; }
+  code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .muted { opacity: .7; font-size: .9rem; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<h1>parrot</h1>
+<p>{{.Domain}} is a <a href="https://github.com/aelpxy/parrot">parrot</a> server. parrot exposes services on your computer to the internet over HTTPS or raw TCP.</p>
+
+<pre>curl -fsSL https://raw.githubusercontent.com/aelpxy/parrot/main/install.sh | sh
+{{if .Anonymous}}export PARROT_SERVER={{.Domain}}{{else}}parrot login &lt;token&gt; --server {{.Domain}}{{end}}
+parrot http 3000</pre>
+
+<p class="muted">Pages under *.{{.Domain}} are run by whoever opened the tunnel, not by this server's operator. Don't enter passwords or personal details on a tunnel you don't trust.</p>
+</body>
+</html>

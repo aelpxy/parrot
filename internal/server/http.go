@@ -98,6 +98,12 @@ func (s *Server) redirectHTTPS(w http.ResponseWriter, r *http.Request) {
 
 // ServeHTTP routes public requests to the tunnel matching the Host header.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.ToLower(hostOnly(r.Host)) == s.domain && r.URL.Path == "/" {
+		s.serveLanding(w)
+
+		return
+	}
+
 	t := s.lookupHost(r.Host)
 	if t == nil {
 		writePage(w, http.StatusNotFound, "No tunnel is running at "+r.Host+".")
@@ -106,6 +112,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t.ServeHTTP(w, r)
+}
+
+func (s *Server) serveLanding(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// The client may already be gone; there is no one left to report a failed write to.
+	_, _ = w.Write(s.landing)
 }
 
 func writePage(w http.ResponseWriter, status int, msg string) {
