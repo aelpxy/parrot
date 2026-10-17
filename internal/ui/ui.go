@@ -201,8 +201,9 @@ func pad(s string, width int) string {
 
 func colorWriter(w io.Writer, opts Options) *colorprofile.Writer {
 	cw := colorprofile.NewWriter(w, os.Environ())
-	if opts.NoColor {
-		cw.Profile = colorprofile.Ascii
+	// Only ever downgrade: raising a non-terminal's NoTTY to ASCII would add bold and faint codes.
+	if opts.NoColor && cw.Profile > colorprofile.ASCII {
+		cw.Profile = colorprofile.ASCII
 	}
 
 	return cw
