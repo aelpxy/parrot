@@ -195,11 +195,18 @@ func (ss *session) authenticate(token string) string {
 }
 
 func (ss *session) handle(ctx context.Context, m *protocol.Message) *protocol.Message {
-	if m.Kind != protocol.KindBind || m.Bind == nil {
-		return &protocol.Message{Kind: protocol.KindError, Error: "unexpected message"}
+	switch {
+	case m.Kind == protocol.KindBind && m.Bind != nil:
+		return ss.handleBind(ctx, m.Bind)
+	case m.Kind == protocol.KindSpeedTest && m.Speed != nil:
+		return ss.speedTest(m.Speed.Direction)
 	}
 
-	bound, err := ss.bind(ctx, m.Bind)
+	return &protocol.Message{Kind: protocol.KindError, Error: protocol.ErrUnexpectedMessage.Error()}
+}
+
+func (ss *session) handleBind(ctx context.Context, b *protocol.Bind) *protocol.Message {
+	bound, err := ss.bind(ctx, b)
 	if err != nil {
 		return &protocol.Message{Kind: protocol.KindError, Error: err.Error()}
 	}

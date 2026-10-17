@@ -2,7 +2,8 @@
 //
 // A client opens one multiplexed session per server. The first stream it opens is the
 // control stream, carrying JSON messages. Every other stream is opened by the server for
-// a single public connection and starts with a binary StreamHeader, followed by raw bytes.
+// a single public connection, or for a speed test the client asked for, and starts with a
+// binary StreamHeader, followed by raw bytes.
 package protocol
 
 import (
@@ -37,7 +38,31 @@ const (
 	KindBind
 	KindBound
 	KindError
+	KindSpeedTest
+	KindSpeedResult
 )
+
+// SpeedDirection is which way a speed test moves data, seen from the client.
+type SpeedDirection int
+
+// Speed test directions.
+const (
+	SpeedInvalid SpeedDirection = iota
+	SpeedDownload
+	SpeedUpload
+)
+
+func (d SpeedDirection) String() string {
+	switch d {
+	case SpeedDownload:
+		return "download"
+	case SpeedUpload:
+		return "upload"
+	case SpeedInvalid:
+	}
+
+	return "invalid"
+}
 
 var (
 	// ErrUnexpectedMessage is returned when the peer sends a message out of order.
@@ -52,6 +77,7 @@ type Message struct {
 	Hello *Hello `json:"hello,omitzero"`
 	Bind  *Bind  `json:"bind,omitzero"`
 	Bound *Bound `json:"bound,omitzero"`
+	Speed *Speed `json:"speed,omitzero"`
 	Error string `json:"error,omitzero"`
 	Kind  Kind   `json:"kind"`
 }
@@ -78,6 +104,13 @@ type Bound struct {
 	URL        string `json:"url"`
 	Subdomain  string `json:"subdomain,omitzero"`
 	RemotePort int    `json:"remote_port,omitzero"`
+}
+
+// Speed asks for a speed test and carries its result: bytes the receiver got over ElapsedNS nanoseconds.
+type Speed struct {
+	Direction SpeedDirection `json:"direction"`
+	Bytes     int64          `json:"bytes,omitzero"`
+	ElapsedNS int64          `json:"elapsed_ns,omitzero"`
 }
 
 // RemoteError is an error reported by the peer.
@@ -142,7 +175,7 @@ func (c *Control) Request(m *Message, want Kind) (*Message, error) {
 		return reply, nil
 	case KindError:
 		return nil, &RemoteError{Message: reply.Error}
-	case KindInvalid, KindHello, KindWelcome, KindBind, KindBound:
+	case KindInvalid, KindHello, KindWelcome, KindBind, KindBound, KindSpeedTest, KindSpeedResult:
 	}
 
 	return nil, fmt.Errorf("%w: kind %d", ErrUnexpectedMessage, reply.Kind)

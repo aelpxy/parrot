@@ -59,6 +59,7 @@ parrot http 3000 -d         # run in the background
 parrot ls                   # list background tunnels
 parrot logs http-3000 -f    # follow a tunnel's log
 parrot stop --all           # stop background tunnels
+parrot speedtest            # measure latency and throughput to the server
 ```
 
 Tunnels you start often can live in a `parrot.toml` and run with `parrot up`:

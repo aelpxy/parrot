@@ -68,6 +68,7 @@ type Server struct {
 	scheme     string
 	publicPort string
 	landing    []byte
+	speedTests chan struct{}
 
 	mu       sync.Mutex
 	hosts    map[string]*httpTunnel
@@ -102,13 +103,14 @@ func New(opts *Options) (*Server, error) {
 	}
 
 	return &Server{
-		logger:   logger,
-		domain:   domain,
-		landing:  landing,
-		opts:     *opts,
-		hosts:    make(map[string]*httpTunnel),
-		ports:    make(map[int]bool),
-		sessions: make(map[*session]struct{}),
+		logger:     logger,
+		domain:     domain,
+		landing:    landing,
+		speedTests: make(chan struct{}, maxSpeedTests),
+		opts:       *opts,
+		hosts:      make(map[string]*httpTunnel),
+		ports:      make(map[int]bool),
+		sessions:   make(map[*session]struct{}),
 	}, nil
 }
 

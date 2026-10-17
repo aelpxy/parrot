@@ -134,7 +134,7 @@ func (a *App) rootCmd() *cobra.Command {
 		a.httpCmd(), a.tcpCmd(), a.upCmd(), a.lsCmd(), a.logsCmd(), a.stopCmd(),
 		a.loginCmd(), a.logoutCmd(),
 		a.serverCmd(), a.serviceCmd(), a.daemonCmd(),
-		versionCmd(),
+		a.speedTestCmd(), versionCmd(),
 	)
 
 	return cmd
