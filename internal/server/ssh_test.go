@@ -293,6 +293,32 @@ func TestSSHSharesHTTPSPort(t *testing.T) {
 	}
 }
 
+func TestSSHOnHTTPSPortGreetsSilentClients(t *testing.T) {
+	t.Parallel()
+
+	tlsConfig, _ := testTLS(t)
+	https := listen(t)
+	serve(t, &server.Options{AllowAnonymous: true, TLS: tlsConfig, SSHHostKey: hostKey(t), SSHOnHTTPS: true}, server.Listeners{Control: listen(t), HTTP: listen(t), HTTPS: https})
+
+	// Like ssh-keyscan: connect, then wait for the server to announce itself.
+	d := net.Dialer{Timeout: waitTimeout}
+
+	conn, err := d.DialContext(t.Context(), "tcp", https.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	if err := conn.SetReadDeadline(time.Now().Add(waitTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	greeting := make([]byte, len("SSH-2.0-"))
+	if _, err := io.ReadFull(conn, greeting); err != nil || string(greeting) != "SSH-2.0-" {
+		t.Errorf("greeting = %q, %v; want the server's SSH version line", greeting, err)
+	}
+}
+
 // testTLS returns a server config with a self-signed certificate for the test domain, and a pool trusting it.
 func testTLS(t *testing.T) (*tls.Config, *x509.CertPool) {
 	t.Helper()

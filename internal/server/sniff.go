@@ -2,9 +2,11 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -12,10 +14,13 @@ import (
 const (
 	sshPrefix    = "SSH-"
 	sniffTimeout = 5 * time.Second
+	// silentWait is how long a client may stay quiet before it is taken for SSH: TLS clients always
+	// speak first, while some SSH tools, such as ssh-keyscan, wait for the server's greeting.
+	silentWait = 2 * time.Second
 )
 
-// splitter shares one listener between SSH and TLS: SSH clients speak first with "SSH-", and
-// anything else is handed on as TLS.
+// splitter shares one listener between SSH and TLS: SSH clients speak first with "SSH-" or wait
+// for the server, and anything else is handed on as TLS.
 type splitter struct {
 	base   net.Listener
 	logger *slog.Logger
@@ -66,7 +71,7 @@ func (sp *splitter) run() {
 func (sp *splitter) route(conn net.Conn) {
 	r := bufio.NewReader(conn)
 
-	prefix, err := peek(conn, r, len(sshPrefix))
+	isSSH, err := sniffSSH(conn, r)
 	if err != nil {
 		sp.logger.Debug("sniff connection failed", "client", conn.RemoteAddr().String(), "error", err)
 		closeQuietly(conn)
@@ -75,7 +80,7 @@ func (sp *splitter) route(conn net.Conn) {
 	}
 
 	half := sp.tls
-	if string(prefix) == sshPrefix {
+	if isSSH {
 		half = sp.ssh
 	}
 
@@ -89,22 +94,39 @@ func (sp *splitter) route(conn net.Conn) {
 	}
 }
 
-// peek reads the first n bytes without consuming them, giving up on clients that stay silent.
-func peek(conn net.Conn, r *bufio.Reader, n int) ([]byte, error) {
+// sniffSSH reports whether conn is SSH, judging by its first bytes without consuming them. A client
+// that says nothing for silentWait is SSH waiting for the server to speak first.
+func sniffSSH(conn net.Conn, r *bufio.Reader) (bool, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(silentWait)); err != nil {
+		return false, fmt.Errorf("set sniff deadline: %w", err)
+	}
+
+	if _, err := r.Peek(1); err != nil {
+		if r.Buffered() == 0 && errors.Is(err, os.ErrDeadlineExceeded) {
+			return true, clearDeadline(conn)
+		}
+
+		return false, fmt.Errorf("read first byte: %w", err)
+	}
+
 	if err := conn.SetReadDeadline(time.Now().Add(sniffTimeout)); err != nil {
-		return nil, fmt.Errorf("set sniff deadline: %w", err)
+		return false, fmt.Errorf("set sniff deadline: %w", err)
 	}
 
-	prefix, err := r.Peek(n)
+	prefix, err := r.Peek(len(sshPrefix))
 	if err != nil {
-		return nil, fmt.Errorf("read first bytes: %w", err)
+		return false, fmt.Errorf("read first bytes: %w", err)
 	}
 
+	return string(prefix) == sshPrefix, clearDeadline(conn)
+}
+
+func clearDeadline(conn net.Conn) error {
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
-		return nil, fmt.Errorf("clear sniff deadline: %w", err)
+		return fmt.Errorf("clear sniff deadline: %w", err)
 	}
 
-	return prefix, nil
+	return nil
 }
 
 func (sp *splitter) close() {
