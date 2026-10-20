@@ -199,29 +199,37 @@ func (ss *session) handshake(ctrl *protocol.Control) error {
 
 // authenticate checks token and returns a rejection message, or "" when the client may proceed.
 func (ss *session) authenticate(token string) string {
-	auth := ss.srv.opts.Auth
+	label, anonymous, reject := ss.srv.authorize(token)
+	if reject != "" {
+		return reject
+	}
 
-	if auth == nil || (token == "" && ss.srv.opts.AllowAnonymous) {
-		ss.logger = ss.logger.With("token", "anonymous")
-		ss.anonymous = true
+	ss.logger = ss.logger.With("token", label)
+	ss.anonymous = anonymous
 
-		return ""
+	return ""
+}
+
+// authorize checks token for any kind of client, returning the label to log it under or a rejection message.
+func (s *Server) authorize(token string) (label string, anonymous bool, reject string) {
+	auth := s.opts.Auth
+
+	if auth == nil || (token == "" && s.opts.AllowAnonymous) {
+		return "anonymous", true, ""
 	}
 
 	if token == "" {
-		return "missing token"
+		return "", false, "missing token"
 	}
 
 	label, err := auth.Authenticate(token)
 	if err != nil {
-		ss.logger.Debug("authentication failed", "error", err)
+		s.logger.Debug("authentication failed", "error", err)
 
-		return "invalid token"
+		return "", false, "invalid token"
 	}
 
-	ss.logger = ss.logger.With("token", label)
-
-	return ""
+	return label, false, ""
 }
 
 func (ss *session) handle(ctx context.Context, m *protocol.Message) *protocol.Message {

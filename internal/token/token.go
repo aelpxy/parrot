@@ -23,8 +23,10 @@ import (
 	"github.com/aelpxy/parrot/internal/atomicfile"
 )
 
+// Prefix starts every token, so tokens can be told apart from other strings such as SSH usernames.
+const Prefix = "prt_"
+
 const (
-	prefix   = "prt_"
 	idLength = 8
 	fileName = "tokens.json"
 )
@@ -56,7 +58,7 @@ func (s *Store) Create(name string) (Token, string, error) {
 		return Token{}, "", err
 	}
 
-	secret := prefix + strings.ToLower(rand.Text())
+	secret := Prefix + strings.ToLower(rand.Text())
 	t := Token{
 		CreatedAt: time.Now().UTC().Truncate(time.Second),
 		ID:        strings.ToLower(rand.Text()[:idLength]),

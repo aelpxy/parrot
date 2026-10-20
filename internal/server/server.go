@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -48,6 +50,13 @@ type Options struct {
 	AllowAnonymous bool
 	// NoWarning skips the page that tells browser visitors an anonymous tunnel is run by someone else.
 	NoWarning bool
+
+	// SSHHostKey enables tunnels from plain `ssh -R`; without it the SSH options are ignored.
+	SSHHostKey ssh.Signer
+	// SSHAddr is a dedicated SSH address for Run, such as ":2222".
+	SSHAddr string
+	// SSHOnHTTPS also accepts SSH on the HTTPS port, telling the two apart by their first bytes.
+	SSHOnHTTPS bool
 }
 
 // Authenticator verifies a client token and returns a label for logs.
@@ -60,6 +69,8 @@ type Listeners struct {
 	Control net.Listener
 	HTTP    net.Listener
 	HTTPS   net.Listener
+	// SSH is a dedicated listener for `ssh -R` clients; it needs Options.SSHHostKey.
+	SSH net.Listener
 }
 
 // Server forwards public traffic to connected clients.
@@ -100,12 +111,11 @@ func New(opts *Options) (*Server, error) {
 		logger = slog.New(slog.DiscardHandler)
 	}
 
-	landing, err := renderLanding(domain, opts.AllowAnonymous)
-	if err != nil {
-		return nil, err
-	}
+	var (
+		wn  *warning
+		err error
+	)
 
-	var wn *warning
 	if !opts.NoWarning {
 		if wn, err = newWarning(); err != nil {
 			return nil, err
@@ -115,7 +125,6 @@ func New(opts *Options) (*Server, error) {
 	return &Server{
 		logger:     logger,
 		domain:     domain,
-		landing:    landing,
 		warning:    wn,
 		speedTests: make(chan struct{}, maxSpeedTests),
 		opts:       *opts,
@@ -155,6 +164,19 @@ func (s *Server) Run(ctx context.Context) error {
 		ls.HTTPS = lns[2]
 	}
 
+	if s.opts.SSHAddr != "" && s.opts.SSHHostKey != nil {
+		ln, err := lc.Listen(ctx, "tcp", s.opts.SSHAddr)
+		if err != nil {
+			for _, open := range lns {
+				err = errors.Join(err, open.Close())
+			}
+
+			return fmt.Errorf("listen %s: %w", s.opts.SSHAddr, err)
+		}
+
+		ls.SSH = ln
+	}
+
 	return s.Serve(ctx, ls)
 }
 
@@ -166,6 +188,16 @@ type httpEndpoint struct {
 
 // Serve accepts client sessions and public traffic on ls until ctx is canceled.
 func (s *Server) Serve(ctx context.Context, ls Listeners) error {
+	sshLns, split, err := s.sshListeners(&ls)
+	if err != nil {
+		return err
+	}
+
+	s.landing, err = renderLanding(s.domain, s.opts.AllowAnonymous, s.landingSSHCommand(sshLns))
+	if err != nil {
+		return err
+	}
+
 	endpoints, err := s.endpoints(ls)
 	if err != nil {
 		return err
@@ -181,6 +213,7 @@ func (s *Server) Serve(ctx context.Context, ls Listeners) error {
 		"public_url", s.scheme+"://*."+s.domain+s.publicPort,
 		"tcp_ports", s.opts.TCPPorts.String(),
 		"anonymous", s.opts.AllowAnonymous,
+		"ssh", len(sshLns) > 0,
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -189,6 +222,8 @@ func (s *Server) Serve(ctx context.Context, ls Listeners) error {
 		g.Go(e.serve)
 	}
 
+	s.startSSH(gctx, g, sshLns, split)
+
 	g.Go(func() error {
 		return s.acceptSessions(gctx, control)
 	})
@@ -196,17 +231,7 @@ func (s *Server) Serve(ctx context.Context, ls Listeners) error {
 	g.Go(func() error {
 		<-gctx.Done()
 
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(gctx), shutdownTimeout)
-		defer cancel()
-
-		errs := make([]error, 0, 1+len(endpoints))
-		errs = append(errs, ignoreClosed(control.Close()))
-
-		for _, e := range endpoints {
-			errs = append(errs, shutdownHTTP(shutdownCtx, e.srv))
-		}
-
-		return errors.Join(errs...)
+		return shutdown(context.WithoutCancel(gctx), control, sshLns, endpoints)
 	})
 
 	if err := g.Wait(); err != nil {
@@ -214,6 +239,115 @@ func (s *Server) Serve(ctx context.Context, ls Listeners) error {
 	}
 
 	return nil
+}
+
+// shutdown stops accepting clients, then gives in-flight public requests shutdownTimeout to finish.
+func shutdown(ctx context.Context, control net.Listener, sshLns []net.Listener, endpoints []httpEndpoint) error {
+	ctx, cancel := context.WithTimeout(ctx, shutdownTimeout)
+	defer cancel()
+
+	errs := make([]error, 0, 1+len(sshLns)+len(endpoints))
+	errs = append(errs, ignoreClosed(control.Close()))
+
+	for _, ln := range sshLns {
+		errs = append(errs, ignoreClosed(ln.Close()))
+	}
+
+	for _, e := range endpoints {
+		errs = append(errs, shutdownHTTP(ctx, e.srv))
+	}
+
+	return errors.Join(errs...)
+}
+
+// landingSSHCommand shows visitors how to tunnel with plain ssh through the port SSH clients
+// actually reach, or "" when SSH is off.
+func (s *Server) landingSSHCommand(sshLns []net.Listener) string {
+	if len(sshLns) == 0 {
+		return ""
+	}
+
+	user := ""
+	if !s.opts.AllowAnonymous {
+		user = "<token>"
+	}
+
+	// The shared HTTPS port comes last and is the one most networks allow, so prefer it.
+	return sshCommand(s.domain, portOf(sshLns[len(sshLns)-1].Addr()), user)
+}
+
+// sshListeners collects where SSH clients connect, splitting the HTTPS listener in ls when asked to.
+func (s *Server) sshListeners(ls *Listeners) ([]net.Listener, *splitter, error) {
+	if s.opts.SSHHostKey == nil {
+		if ls.SSH != nil || s.opts.SSHOnHTTPS {
+			return nil, nil, errors.New("ssh needs a host key")
+		}
+
+		return nil, nil, nil
+	}
+
+	var lns []net.Listener
+	if ls.SSH != nil {
+		lns = append(lns, ls.SSH)
+	}
+
+	if !s.opts.SSHOnHTTPS {
+		return lns, nil, nil
+	}
+
+	if s.opts.TLS == nil || ls.HTTPS == nil {
+		return nil, nil, errors.New("ssh on the https port needs tls")
+	}
+
+	split := newSplitter(ls.HTTPS, s.logger)
+
+	var sshLn net.Listener
+
+	ls.HTTPS, sshLn = split.listeners()
+
+	return append(lns, sshLn), split, nil
+}
+
+// startSSH serves SSH clients on lns, routing the shared HTTPS port first when split is set.
+func (s *Server) startSSH(ctx context.Context, g *errgroup.Group, lns []net.Listener, split *splitter) {
+	if split != nil {
+		g.Go(func() error {
+			split.run()
+
+			return nil
+		})
+	}
+
+	if len(lns) == 0 {
+		return
+	}
+
+	cfg := s.sshConfig()
+	s.logger.Info("ssh tunnels enabled", "host_key", ssh.FingerprintSHA256(s.opts.SSHHostKey.PublicKey()))
+
+	for _, ln := range lns {
+		g.Go(func() error {
+			return s.acceptSSH(ctx, ln, cfg)
+		})
+	}
+}
+
+// publicPortNumber is the port public URLs use, which SSH clients see as their forward's port.
+func (s *Server) publicPortNumber() uint32 {
+	port := strings.TrimPrefix(s.publicPort, ":")
+	if port == "" {
+		port = defaultHTTPPort
+		if s.scheme == "https" {
+			port = defaultHTTPSPort
+		}
+	}
+
+	n, err := strconv.ParseUint(port, 10, 16)
+	if err != nil {
+		return 0
+	}
+
+	return uint32(n)
 }
 
 // endpoints serves tunnels over HTTPS when TLS is on, with HTTP redirecting; otherwise over HTTP.

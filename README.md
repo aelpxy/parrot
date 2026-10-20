@@ -41,6 +41,20 @@ Anyone with the URL can reach your tunnel. Add `--auth user:pass` to require a l
 
 Because tunnels opened without a token could be anyone's, browsers see a short "you're visiting a site run by someone else" page the first time they open one. API calls, webhooks, and `curl` are not affected, and a program can skip the page by sending a `Parrot-Skip-Warning` header. Tunnels opened with a token never show it.
 
+### Without installing anything
+
+Any computer with `ssh` can open a tunnel on the public server, Windows 10 and later included:
+
+```sh
+ssh -p 443 -R0:localhost:3000 tryparrot.site              # HTTP tunnel with a random name
+ssh -p 443 -R myapp:80:localhost:3000 tryparrot.site      # ask for myapp.tryparrot.site
+ssh -p 443 -R0:localhost:3000 qr@tryparrot.site           # also show a QR code
+ssh -p 443 -R0:localhost:5432 tcp@tryparrot.site          # raw TCP tunnel
+ssh -p 443 -R0:localhost:3000 prt_...@tryparrot.site      # with a token
+```
+
+The URL appears in your terminal, and the tunnel lasts until you press ctrl+c. Options in the username combine with `+`, as in `prt_...+qr@`. ssh doesn't reconnect after a dropped connection, so for long-lived tunnels add `-o ServerAliveInterval=30`, ask for a fixed name, or use the parrot client.
+
 ### Other servers
 
 For a [server you run](#run-a-server) or someone else's, log in once with a token from its operator, or connect anonymously if it allows that:
@@ -135,6 +149,8 @@ Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/aelpxy/parr
    ```
 
 Add `--allow-anonymous` to the server command to let clients connect without a token. Browser visitors of those tunnels see a warning page first; add `--no-warning` to turn it off.
+
+To let people open tunnels with plain `ssh -R`, add `--ssh-on-https` to accept SSH on the HTTPS port (parrot tells the two apart by their first bytes), or `--ssh :2222` for a dedicated port. The server keeps its SSH host key in the data directory and logs its fingerprint at startup, so you can publish it for users to check.
 
 ### With systemd
 

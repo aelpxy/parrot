@@ -22,7 +22,11 @@
 <pre>curl -fsSL https://raw.githubusercontent.com/aelpxy/parrot/main/install.sh | sh
 {{if .Anonymous}}export PARROT_SERVER={{.Domain}}{{else}}parrot login &lt;token&gt; --server {{.Domain}}{{end}}
 parrot http 3000</pre>
+{{if .SSHCommand}}
+<p>No install needed: any computer with <code>ssh</code> can open a tunnel too.</p>
 
+<pre>{{.SSHCommand}}</pre>
+{{end}}
 <p class="muted">Pages under *.{{.Domain}} are run by whoever opened the tunnel, not by this server's operator. Don't enter passwords or personal details on a tunnel you don't trust.</p>
 </body>
 </html>

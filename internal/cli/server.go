@@ -11,10 +11,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/sys/unix"
 
 	"github.com/aelpxy/parrot/internal/certs"
 	"github.com/aelpxy/parrot/internal/server"
+	"github.com/aelpxy/parrot/internal/sshkey"
 	"github.com/aelpxy/parrot/internal/token"
 )
 
@@ -24,6 +26,7 @@ const (
 	defaultHTTPSAddr   = ":443"
 	defaultTCPPorts    = "30000-40000"
 	rootDataDir        = "/var/lib/parrot"
+	sshHostKeyName     = "ssh_host_ed25519_key"
 )
 
 type serverOptions struct {
@@ -37,6 +40,8 @@ type serverOptions struct {
 	dataDir        string
 	allowAnonymous bool
 	noWarning      bool
+	ssh            string
+	sshOnHTTPS     bool
 }
 
 func (a *App) serverCmd() *cobra.Command {
@@ -64,6 +69,8 @@ func (a *App) serverCmd() *cobra.Command {
 	f.StringVar(&opts.tlsKey, "tls-key", "", "private key for --tls-cert")
 	f.BoolVar(&opts.allowAnonymous, "allow-anonymous", false, "accept clients without a token")
 	f.BoolVar(&opts.noWarning, "no-warning", false, "don't show browser visitors of anonymous tunnels a warning page first")
+	f.StringVar(&opts.ssh, "ssh", "", "also accept tunnels from plain 'ssh -R' on this address, such as :2222")
+	f.BoolVar(&opts.sshOnHTTPS, "ssh-on-https", false, "also accept 'ssh -R' tunnels on the HTTPS port (needs TLS)")
 	cmd.MarkFlagsRequiredTogether("tls-cert", "tls-key")
 
 	cmd.PersistentFlags().StringVar(&opts.dataDir, "data-dir", defaultDataDir(), "directory for tokens")
@@ -85,22 +92,18 @@ func (a *App) runServer(ctx context.Context, opts *serverOptions) error {
 
 	logger := a.logger(slog.LevelInfo)
 
-	certFile, keyFile := opts.tlsCert, opts.tlsKey
-	if certFile == "" {
-		certFile, keyFile = issuedCert(opts.dataDir, opts.domain)
-	}
-
-	var tlsConfig *tls.Config
-
-	if certFile != "" {
-		tlsConfig, err = server.LoadTLS(certFile, keyFile, logger)
-		if err != nil {
-			return fmt.Errorf("tls certificate: %w", err)
-		}
+	tlsConfig, err := serverTLS(opts, logger)
+	if err != nil {
+		return err
 	}
 
 	store := &token.Store{Dir: opts.dataDir}
 	warnAuth(logger, store, opts.allowAnonymous)
+
+	hostKey, err := sshHostKey(opts)
+	if err != nil {
+		return err
+	}
 
 	srv, err := server.New(&server.Options{
 		Logger:         logger,
@@ -113,6 +116,9 @@ func (a *App) runServer(ctx context.Context, opts *serverOptions) error {
 		TCPPorts:       ports,
 		AllowAnonymous: opts.allowAnonymous,
 		NoWarning:      opts.noWarning,
+		SSHHostKey:     hostKey,
+		SSHAddr:        opts.ssh,
+		SSHOnHTTPS:     opts.sshOnHTTPS,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)
@@ -141,6 +147,39 @@ func issuedCert(dataDir, domain string) (string, string) {
 }
 
 // warnAuth points out configurations where clients can connect without a token, or not at all.
+// serverTLS loads --tls-cert, or the certificate from 'parrot server cert'; nil means plain HTTP.
+func serverTLS(opts *serverOptions, logger *slog.Logger) (*tls.Config, error) {
+	certFile, keyFile := opts.tlsCert, opts.tlsKey
+	if certFile == "" {
+		certFile, keyFile = issuedCert(opts.dataDir, opts.domain)
+	}
+
+	if certFile == "" {
+		return nil, nil
+	}
+
+	cfg, err := server.LoadTLS(certFile, keyFile, logger)
+	if err != nil {
+		return nil, fmt.Errorf("tls certificate: %w", err)
+	}
+
+	return cfg, nil
+}
+
+// sshHostKey loads the server's SSH identity when SSH tunnels are on, creating it on first use.
+func sshHostKey(opts *serverOptions) (ssh.Signer, error) {
+	if opts.ssh == "" && !opts.sshOnHTTPS {
+		return nil, nil
+	}
+
+	key, err := sshkey.LoadOrCreate(filepath.Join(opts.dataDir, sshHostKeyName))
+	if err != nil {
+		return nil, fmt.Errorf("ssh: %w", err)
+	}
+
+	return key, nil
+}
+
 func warnAuth(logger *slog.Logger, store *token.Store, allowAnonymous bool) {
 	if allowAnonymous {
 		logger.Warn("anonymous clients are allowed; anyone who can reach this server can open tunnels")
