@@ -29,6 +29,7 @@ type session struct {
 	listeners  []net.Listener
 	tunnels    []*httpTunnel
 	wg         sync.WaitGroup
+	anonymous  bool
 }
 
 func (s *Server) serveSession(ctx context.Context, conn net.Conn) {
@@ -174,6 +175,7 @@ func (ss *session) authenticate(token string) string {
 
 	if auth == nil || (token == "" && ss.srv.opts.AllowAnonymous) {
 		ss.logger = ss.logger.With("token", "anonymous")
+		ss.anonymous = true
 
 		return ""
 	}
@@ -249,7 +251,12 @@ func (ss *session) bind(ctx context.Context, b *protocol.Bind) (*protocol.Bound,
 }
 
 func (ss *session) bindHTTP(b *protocol.Bind) (*protocol.Bound, error) {
-	t := newHTTPTunnel(ss.mux, b, ss.logger)
+	var wn *warning
+	if ss.anonymous {
+		wn = ss.srv.warning
+	}
+
+	t := newHTTPTunnel(ss.mux, b, ss.logger, wn)
 
 	sub, err := ss.srv.registerHost(b.Subdomain, t)
 	if err != nil {

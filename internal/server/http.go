@@ -21,12 +21,14 @@ const maxIdleStreams = 32
 type httpTunnel struct {
 	proxy     *httputil.ReverseProxy
 	transport *http.Transport
+	warning   *warning
 	user      string
 	pass      string
 	auth      bool
 }
 
-func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *httpTunnel {
+// newHTTPTunnel proxies to b's client tunnel; a non-nil wn shows browser visitors a warning first.
+func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger, wn *warning) *httpTunnel {
 	logger = logger.With("tunnel", b.Name)
 
 	transport := &http.Transport{
@@ -51,6 +53,10 @@ func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *h
 			if b.Auth != "" {
 				pr.Out.Header.Del("Authorization")
 			}
+
+			if wn != nil {
+				stripWarning(pr.Out.Header)
+			}
 		},
 		Transport: transport,
 		ErrorLog:  slog.NewLogLogger(logger.Handler(), slog.LevelDebug),
@@ -62,10 +68,15 @@ func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger) *h
 
 	user, pass, _ := strings.Cut(b.Auth, ":")
 
-	return &httpTunnel{proxy: proxy, transport: transport, user: user, pass: pass, auth: b.Auth != ""}
+	return &httpTunnel{proxy: proxy, transport: transport, warning: wn, user: user, pass: pass, auth: b.Auth != ""}
 }
 
 func (t *httpTunnel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// The warning comes before any login prompt so visitors see it before typing credentials.
+	if t.warning != nil && t.warning.intercept(w, r) {
+		return
+	}
+
 	if t.auth && !t.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `Basic realm="parrot", charset="UTF-8"`)
 		writePage(w, http.StatusUnauthorized, "authentication required.")

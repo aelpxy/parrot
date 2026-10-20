@@ -39,6 +39,8 @@ To use it by default, put `server = "tryparrot.site"` in `~/.config/parrot/confi
 
 Anyone with the URL can reach your tunnel. Add `--auth user:pass` to require a login on HTTP tunnels, and don't expose anything you wouldn't put on the open internet. Subdomains requested with `-s` are first come, first served.
 
+Because tunnels opened without a token could be anyone's, browsers see a short "you're visiting a site run by someone else" page the first time they open one. API calls, webhooks, and `curl` are not affected, and a program can skip the page by sending a `Parrot-Skip-Warning` header. Tunnels opened with a token never show it.
+
 ### Other servers
 
 For a [server you run](#run-a-server) or someone else's, log in once with a token from its operator, or connect anonymously if it allows that:
@@ -132,7 +134,7 @@ Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/aelpxy/parr
    docker exec parrot parrot server token create --name laptop
    ```
 
-Add `--allow-anonymous` to the server command to let clients connect without a token.
+Add `--allow-anonymous` to the server command to let clients connect without a token. Browser visitors of those tunnels see a warning page first; add `--no-warning` to turn it off.
 
 ### With systemd
 

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>You're visiting a parrot tunnel</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.6 ui-sans-serif, system-ui, sans-serif; max-width: 36rem; margin: 4rem auto; padding: 0 1.25rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+  p { margin: .75rem 0; }
+  code { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+  button { font: inherit; font-weight: 600; padding: .55rem 1.2rem; border-radius: 6px; border: 1px solid currentColor; background: transparent; color: inherit; cursor: pointer; margin-top: .5rem; }
+  .muted { opacity: .7; font-size: .9rem; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<h1>You're about to visit a site run by someone else</h1>
+<p><code>{{.Host}}</code> is a tunnel to someone's computer, opened through <a href="https://github.com/aelpxy/parrot">parrot</a>. Whoever opened it controls what you see next, not the operator of this server.</p>
+<p>Only continue if you trust whoever sent you this link. Never enter passwords, payment details, or personal information on a page you weren't expecting.</p>
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<button type="submit">Visit site</button>
+</form>
+<p class="muted">Running this tunnel? Programs can skip this page by sending a <code>Parrot-Skip-Warning</code> header, and tunnels opened with a token never show it.</p>
+</body>
+</html>

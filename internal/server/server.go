@@ -46,6 +46,8 @@ type Options struct {
 	HTTPSAddr      string
 	TCPPorts       PortRange
 	AllowAnonymous bool
+	// NoWarning skips the page that tells browser visitors an anonymous tunnel is run by someone else.
+	NoWarning bool
 }
 
 // Authenticator verifies a client token and returns a label for logs.
@@ -68,6 +70,7 @@ type Server struct {
 	scheme     string
 	publicPort string
 	landing    []byte
+	warning    *warning
 	speedTests chan struct{}
 
 	mu       sync.Mutex
@@ -102,10 +105,18 @@ func New(opts *Options) (*Server, error) {
 		return nil, err
 	}
 
+	var wn *warning
+	if !opts.NoWarning {
+		if wn, err = newWarning(); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Server{
 		logger:     logger,
 		domain:     domain,
 		landing:    landing,
+		warning:    wn,
 		speedTests: make(chan struct{}, maxSpeedTests),
 		opts:       *opts,
 		hosts:      make(map[string]*httpTunnel),

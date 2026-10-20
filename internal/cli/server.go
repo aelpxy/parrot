@@ -36,6 +36,7 @@ type serverOptions struct {
 	tlsKey         string
 	dataDir        string
 	allowAnonymous bool
+	noWarning      bool
 }
 
 func (a *App) serverCmd() *cobra.Command {
@@ -62,6 +63,7 @@ func (a *App) serverCmd() *cobra.Command {
 	f.StringVar(&opts.tlsCert, "tls-cert", "", "certificate for the domain and *.domain (uses the one from 'parrot server cert' if omitted)")
 	f.StringVar(&opts.tlsKey, "tls-key", "", "private key for --tls-cert")
 	f.BoolVar(&opts.allowAnonymous, "allow-anonymous", false, "accept clients without a token")
+	f.BoolVar(&opts.noWarning, "no-warning", false, "don't show browser visitors of anonymous tunnels a warning page first")
 	cmd.MarkFlagsRequiredTogether("tls-cert", "tls-key")
 
 	cmd.PersistentFlags().StringVar(&opts.dataDir, "data-dir", defaultDataDir(), "directory for tokens")
@@ -110,6 +112,7 @@ func (a *App) runServer(ctx context.Context, opts *serverOptions) error {
 		HTTPSAddr:      opts.https,
 		TCPPorts:       ports,
 		AllowAnonymous: opts.allowAnonymous,
+		NoWarning:      opts.noWarning,
 	})
 	if err != nil {
 		return fmt.Errorf("server: %w", err)

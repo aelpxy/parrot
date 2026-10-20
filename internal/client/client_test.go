@@ -29,6 +29,7 @@ type harness struct {
 	httpsAddr   string
 	http        *http.Client
 	clientTLS   *tls.Config
+	token       string
 }
 
 func startServer(t *testing.T) *harness {
@@ -87,7 +88,7 @@ func (h *harness) startClient(t *testing.T, specs ...tunnel.Spec) map[string]cli
 	online := make(chan []client.Tunnel, 1)
 	done := make(chan error, 1)
 
-	opts := &client.Options{Server: h.controlAddr, TLS: h.clientTLS, OnOnline: func(ts []client.Tunnel) { online <- ts }}
+	opts := &client.Options{Server: h.controlAddr, TLS: h.clientTLS, Token: h.token, OnOnline: func(ts []client.Tunnel) { online <- ts }}
 
 	go func() { done <- client.Run(ctx, opts, specs) }()
 
