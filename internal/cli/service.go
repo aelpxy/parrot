@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/aelpxy/parrot/internal/config"
 	"github.com/aelpxy/parrot/internal/daemon"
 	"github.com/aelpxy/parrot/internal/service"
 	"github.com/aelpxy/parrot/internal/ui"
@@ -89,19 +91,45 @@ func daemonUnit(args []string) (service.Unit, error) {
 	return service.DaemonUnit(exe), nil
 }
 
-// serverUnit validates the server flags passed after "--" before they are baked into a unit.
-func (a *App) serverUnit(args []string) (service.Unit, error) {
-	if os.Geteuid() != 0 {
-		return service.Unit{}, withHint(errors.New("installing the server needs root"), "try '"+serverInstallExample+"'")
+// checkServerDomain makes sure the unit will know its domain, from --domain or the --config file,
+// and that a config file will still be found when systemd starts the server from /.
+func checkServerDomain(probe *cobra.Command) error {
+	domain, _ := probe.Flags().GetString("domain")
+
+	path, _ := probe.Flags().GetString("config")
+	if path != "" {
+		if !filepath.IsAbs(path) {
+			return withHint(fmt.Errorf("--config %s is a relative path", path), "use an absolute path, such as /etc/parrot/server.toml")
+		}
+
+		file, err := config.LoadServerFile(path)
+		if err != nil {
+			return fmt.Errorf("--config: %w", err)
+		}
+
+		domain = cmp.Or(domain, file.Domain)
 	}
 
+	if domain == "" {
+		return withHint(errors.New("missing domain for the server"), "pass --domain, set domain in a --config file, or try '"+serverInstallExample+"'")
+	}
+
+	return nil
+}
+
+// serverUnit validates the server flags passed after "--" before they are baked into a unit.
+func (a *App) serverUnit(args []string) (service.Unit, error) {
 	probe := a.serverCmd()
 	if err := probe.ParseFlags(args); err != nil {
 		return service.Unit{}, withHint(fmt.Errorf("server flags: %w", err), "see 'parrot server --help'")
 	}
 
-	if domain, _ := probe.Flags().GetString("domain"); domain == "" {
-		return service.Unit{}, withHint(errors.New("missing --domain for the server"), "try '"+serverInstallExample+"'")
+	if err := checkServerDomain(probe); err != nil {
+		return service.Unit{}, err
+	}
+
+	if os.Geteuid() != 0 {
+		return service.Unit{}, withHint(errors.New("installing the server needs root"), "try '"+serverInstallExample+"'")
 	}
 
 	exe, err := installableBinary()

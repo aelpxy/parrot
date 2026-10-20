@@ -45,6 +45,10 @@ func TestRun(t *testing.T) {
 		{name: "udp help", args: []string{"udp", "--help"}, wantStdout: "Expose a local UDP service"},
 		{name: "server config unknown key", args: []string{"server", "--config", serverConfig(t, `domian = "x"`)}, wantCode: 1, wantStderr: `unknown key "domian"`},
 		{name: "server config without domain", args: []string{"server", "--config", serverConfig(t, `allow_anonymous = true`)}, wantCode: 1, wantStderr: "set domain in --config"},
+		{name: "server unit without domain", args: []string{"service", "install", "--server", "--", "--allow-anonymous"}, wantCode: 1, wantStderr: "missing domain"},
+		{name: "server unit config without domain", args: []string{"service", "install", "--server", "--", "--config", serverConfig(t, `allow_anonymous = true`)}, wantCode: 1, wantStderr: "missing domain"},
+		{name: "server unit relative config", args: []string{"service", "install", "--server", "--", "--config", "server.toml"}, wantCode: 1, wantStderr: "absolute path"},
+		{name: "server unit bad config", args: []string{"service", "install", "--server", "--", "--config", serverConfig(t, `domian = "x"`)}, wantCode: 1, wantStderr: `unknown key "domian"`},
 	}
 
 	for _, tt := range tests {
