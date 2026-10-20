@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/hashicorp/yamux"
-
 	"github.com/aelpxy/parrot/internal/protocol"
 )
 
@@ -27,13 +25,13 @@ type httpTunnel struct {
 	auth      bool
 }
 
-// newHTTPTunnel proxies to b's client tunnel; a non-nil wn shows browser visitors a warning first.
-func newHTTPTunnel(mux *yamux.Session, b *protocol.Bind, logger *slog.Logger, wn *warning) *httpTunnel {
+// newHTTPTunnel proxies to b's client tunnel through open; a non-nil wn shows browser visitors a warning first.
+func newHTTPTunnel(open func() (net.Conn, error), b *protocol.Bind, logger *slog.Logger, wn *warning) *httpTunnel {
 	logger = logger.With("tunnel", b.Name)
 
 	transport := &http.Transport{
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
-			return openStream(mux, protocol.StreamHeader{Tunnel: b.Name})
+			return open()
 		},
 		MaxIdleConnsPerHost: maxIdleStreams,
 		IdleConnTimeout:     idleTimeout,

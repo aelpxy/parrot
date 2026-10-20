@@ -320,7 +320,7 @@ func (s *Server) closeSessions() {
 	s.closing = true
 
 	for ss := range s.sessions {
-		ss.closeMux()
+		ss.disconnect()
 	}
 }
 

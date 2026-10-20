@@ -18,10 +18,38 @@ import (
 	"github.com/aelpxy/parrot/internal/tunnel"
 )
 
+// client is the connection a session's tunnels reach their client over: yamux for parrot clients, SSH for ssh -R.
+type client interface {
+	// open starts a connection to the client for one visitor of tunnel.
+	open(tunnel, remoteAddr string) (net.Conn, error)
+	// done is closed once the client has disconnected.
+	done() <-chan struct{}
+	close() error
+}
+
+// muxClient reaches a parrot client over its yamux session.
+type muxClient struct {
+	mux *yamux.Session
+}
+
+func (c muxClient) open(tunnel, remoteAddr string) (net.Conn, error) {
+	return openStream(c.mux, protocol.StreamHeader{Tunnel: tunnel, RemoteAddr: remoteAddr})
+}
+
+func (c muxClient) done() <-chan struct{} { return c.mux.CloseChan() }
+
+func (c muxClient) close() error {
+	if err := c.mux.Close(); err != nil {
+		return fmt.Errorf("close session: %w", err)
+	}
+
+	return nil
+}
+
 // session is one connected client and the tunnels it has bound.
 type session struct {
 	srv        *Server
-	mux        *yamux.Session
+	client     client
 	logger     *slog.Logger
 	names      map[string]bool
 	subdomains []string
@@ -42,15 +70,15 @@ func (s *Server) serveSession(ctx context.Context, conn net.Conn) {
 		return
 	}
 
-	ss := &session{srv: s, mux: mux, logger: logger, names: make(map[string]bool)}
+	ss := &session{srv: s, client: muxClient{mux: mux}, logger: logger, names: make(map[string]bool)}
 
 	if !s.track(ss) {
-		ss.closeMux()
+		ss.disconnect()
 
 		return
 	}
 
-	err = ss.serve(ctx)
+	err = ss.serve(ctx, mux)
 
 	s.untrack(ss)
 	ss.close()
@@ -99,9 +127,9 @@ func (s *Server) untrack(ss *session) {
 	delete(s.sessions, ss)
 }
 
-func (ss *session) serve(ctx context.Context) error {
+func (ss *session) serve(ctx context.Context, mux *yamux.Session) error {
 	acceptCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	stream, err := ss.mux.AcceptStreamWithContext(acceptCtx)
+	stream, err := mux.AcceptStreamWithContext(acceptCtx)
 
 	cancel()
 
@@ -256,7 +284,7 @@ func (ss *session) bindHTTP(b *protocol.Bind) (*protocol.Bound, error) {
 		wn = ss.srv.warning
 	}
 
-	t := newHTTPTunnel(ss.mux, b, ss.logger, wn)
+	t := newHTTPTunnel(func() (net.Conn, error) { return ss.client.open(b.Name, "") }, b, ss.logger, wn)
 
 	sub, err := ss.srv.registerHost(b.Subdomain, t)
 	if err != nil {
@@ -295,7 +323,7 @@ func (ss *session) bindTCP(ctx context.Context, b *protocol.Bind) (*protocol.Bou
 
 func (ss *session) acceptTCP(ln net.Listener, name string) {
 	for {
-		conn, err := accept(ln, ss.mux.CloseChan(), ss.logger)
+		conn, err := accept(ln, ss.client.done(), ss.logger)
 		if err != nil {
 			return
 		}
@@ -307,7 +335,7 @@ func (ss *session) acceptTCP(ln net.Listener, name string) {
 }
 
 func (ss *session) forwardTCP(conn net.Conn, name string) {
-	stream, err := openStream(ss.mux, protocol.StreamHeader{Tunnel: name, RemoteAddr: conn.RemoteAddr().String()})
+	stream, err := ss.client.open(name, conn.RemoteAddr().String())
 	if err != nil {
 		ss.logger.Debug("open tcp stream failed", "tunnel", name, "error", err)
 		ss.closeConn(conn)
@@ -323,7 +351,7 @@ func (ss *session) forwardTCP(conn net.Conn, name string) {
 // close releases everything the session holds and waits for its connections to finish.
 func (ss *session) close() {
 	ss.srv.release(ss.subdomains, ss.ports)
-	ss.closeMux()
+	ss.disconnect()
 
 	for _, ln := range ss.listeners {
 		if err := ln.Close(); err != nil {
@@ -338,9 +366,9 @@ func (ss *session) close() {
 	ss.wg.Wait()
 }
 
-func (ss *session) closeMux() {
-	if err := ss.mux.Close(); err != nil {
-		ss.logger.Debug("close session failed", "error", err)
+func (ss *session) disconnect() {
+	if err := ss.client.close(); err != nil {
+		ss.logger.Debug("disconnect failed", "error", err)
 	}
 }
 

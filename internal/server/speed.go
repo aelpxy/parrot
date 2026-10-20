@@ -44,7 +44,7 @@ func (ss *session) runSpeedTest(direction protocol.SpeedDirection) (*protocol.Sp
 		return nil, errors.New("unknown direction")
 	}
 
-	stream, err := openStream(ss.mux, protocol.StreamHeader{})
+	stream, err := ss.client.open("", "")
 	if err != nil {
 		return nil, err
 	}
