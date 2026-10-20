@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/aelpxy/parrot/internal/certs"
+	"github.com/aelpxy/parrot/internal/config"
 	"github.com/aelpxy/parrot/internal/server"
 	"github.com/aelpxy/parrot/internal/sshkey"
 	"github.com/aelpxy/parrot/internal/token"
@@ -42,6 +43,7 @@ type serverOptions struct {
 	noWarning      bool
 	ssh            string
 	sshOnHTTPS     bool
+	configPath     string
 }
 
 func (a *App) serverCmd() *cobra.Command {
@@ -51,9 +53,13 @@ func (a *App) serverCmd() *cobra.Command {
 		Use:     "server",
 		Short:   "Run the public forwarding server",
 		GroupID: groupHosting,
-		Example: `  parrot server --domain example.com --tls-cert fullchain.pem --tls-key privkey.pem
+		Example: `  parrot server --config /etc/parrot/server.toml
+  parrot server --domain example.com --tls-cert fullchain.pem --tls-key privkey.pem
   parrot server --domain localhost --http :8080 --allow-anonymous`,
 		Args: cobra.NoArgs,
+		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
+			return applyServerConfig(c, &opts)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.runServer(cmd.Context(), &opts)
 		},
@@ -74,6 +80,7 @@ func (a *App) serverCmd() *cobra.Command {
 	cmd.MarkFlagsRequiredTogether("tls-cert", "tls-key")
 
 	cmd.PersistentFlags().StringVar(&opts.dataDir, "data-dir", defaultDataDir(), "directory for tokens")
+	cmd.PersistentFlags().StringVar(&opts.configPath, "config", "", "server config file; flags given on the command line override it")
 
 	cmd.AddCommand(a.tokenCmd(&opts.dataDir), a.certCmd(&opts.dataDir))
 
@@ -82,7 +89,7 @@ func (a *App) serverCmd() *cobra.Command {
 
 func (a *App) runServer(ctx context.Context, opts *serverOptions) error {
 	if opts.domain == "" {
-		return withHint(errors.New("missing --domain"), "to test locally: '"+localServerCmd+"'")
+		return withHint(errors.New("missing --domain"), "set domain in --config or pass --domain; to test locally: '"+localServerCmd+"'")
 	}
 
 	ports, err := server.ParsePortRange(opts.tcpPorts)
@@ -147,6 +154,66 @@ func issuedCert(dataDir, domain string) (string, string) {
 }
 
 // warnAuth points out configurations where clients can connect without a token, or not at all.
+// applyServerConfig fills every setting not given as a flag from the --config file, for the server
+// and its token and cert commands alike, so they agree on the data directory.
+func applyServerConfig(c *cobra.Command, opts *serverOptions) error {
+	if opts.configPath == "" {
+		return nil
+	}
+
+	file, err := config.LoadServerFile(opts.configPath)
+	if err != nil {
+		return fmt.Errorf("--config: %w", err)
+	}
+
+	settings := []struct {
+		flag string
+		dst  *string
+		val  string
+	}{
+		{"domain", &opts.domain, file.Domain},
+		{"listen", &opts.control, file.Listen},
+		{"http", &opts.http, file.HTTP},
+		{"https", &opts.https, file.HTTPS},
+		{"tcp-ports", &opts.tcpPorts, file.TCPPorts},
+		{"tls-cert", &opts.tlsCert, file.TLSCert},
+		{"tls-key", &opts.tlsKey, file.TLSKey},
+		{"data-dir", &opts.dataDir, file.DataDir},
+		{"ssh", &opts.ssh, file.SSH},
+	}
+
+	for _, s := range settings {
+		if s.val != "" && !flagChanged(c, s.flag) {
+			*s.dst = s.val
+		}
+	}
+
+	switches := []struct {
+		flag string
+		dst  *bool
+		val  bool
+	}{
+		{"allow-anonymous", &opts.allowAnonymous, file.AllowAnonymous},
+		{"no-warning", &opts.noWarning, file.NoWarning},
+		{"ssh-on-https", &opts.sshOnHTTPS, file.SSHOnHTTPS},
+	}
+
+	for _, s := range switches {
+		if s.val && !flagChanged(c, s.flag) {
+			*s.dst = true
+		}
+	}
+
+	return nil
+}
+
+// flagChanged reports whether flag was given to c; subcommands such as 'token' lack the server's own flags.
+func flagChanged(c *cobra.Command, flag string) bool {
+	f := c.Flags().Lookup(flag)
+
+	return f != nil && f.Changed
+}
+
 // serverTLS loads --tls-cert, or the certificate from 'parrot server cert'; nil means plain HTTP.
 func serverTLS(opts *serverOptions, logger *slog.Logger) (*tls.Config, error) {
 	certFile, keyFile := opts.tlsCert, opts.tlsKey

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -41,6 +42,9 @@ func TestRun(t *testing.T) {
 		{name: "invalid config", args: []string{"up", "-c", badConfig}, wantCode: 1, wantStderr: "only supported for http"},
 		{name: "stop needs name", args: []string{"stop"}, wantCode: 1, wantStderr: "missing tunnel name"},
 		{name: "stop name and all", args: []string{"stop", "web", "--all"}, wantCode: 1, wantStderr: "not both"},
+		{name: "udp help", args: []string{"udp", "--help"}, wantStdout: "Expose a local UDP service"},
+		{name: "server config unknown key", args: []string{"server", "--config", serverConfig(t, `domian = "x"`)}, wantCode: 1, wantStderr: `unknown key "domian"`},
+		{name: "server config without domain", args: []string{"server", "--config", serverConfig(t, `allow_anonymous = true`)}, wantCode: 1, wantStderr: "set domain in --config"},
 	}
 
 	for _, tt := range tests {
@@ -62,6 +66,35 @@ func TestRun(t *testing.T) {
 				t.Errorf("stderr = %q, want containing %q", stderr.String(), tt.wantStderr)
 			}
 		})
+	}
+}
+
+func serverConfig(t *testing.T, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "server.toml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestServerConfigDataDir(t *testing.T) {
+	t.Parallel()
+
+	dataDir := filepath.Join(t.TempDir(), "state")
+	path := serverConfig(t, "data_dir = "+strconv.Quote(dataDir))
+
+	var stdout, stderr bytes.Buffer
+
+	code := cli.New(strings.NewReader(""), &stdout, &stderr).Run(t.Context(), []string{"server", "token", "create", "--name", "ci", "--config", path})
+	if code != 0 {
+		t.Fatalf("token create exit code = %d\nstderr: %s", code, stderr.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(dataDir, "tokens.json")); err != nil {
+		t.Errorf("token not stored in the config's data_dir: %v", err)
 	}
 }
 
