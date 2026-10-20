@@ -41,9 +41,15 @@ type managed struct {
 	online chan struct{}
 	done   chan struct{}
 
+	// spec and conn are what the tunnel was started with, so an apply can tell whether it changed.
+	spec tunnel.Spec
+	conn connection
+
 	mu   sync.Mutex
 	info TunnelInfo
 	err  error
+	// assigned is the subdomain and port the server gave, which a restart asks for again.
+	assigned tunnel.Spec
 }
 
 // New returns an empty Daemon.
@@ -67,6 +73,9 @@ func (d *Daemon) Serve(ctx context.Context, ln net.Listener) error {
 	mux.HandleFunc("GET /tunnels", d.handleList)
 	mux.HandleFunc("POST /tunnels", func(w http.ResponseWriter, r *http.Request) {
 		d.handleStart(ctx, &wg, w, r)
+	})
+	mux.HandleFunc("POST /apply", func(w http.ResponseWriter, r *http.Request) {
+		d.handleApply(ctx, &wg, w, r)
 	})
 	mux.HandleFunc("DELETE /tunnels", d.handleStopAll)
 	mux.HandleFunc("DELETE /tunnels/{name}", d.handleStop)
@@ -173,9 +182,12 @@ func (d *Daemon) start(ctx context.Context, wg *sync.WaitGroup, req *StartReques
 			log:    newLogbook(),
 			online: make(chan struct{}),
 			done:   make(chan struct{}),
+			spec:   s,
+			conn:   connection{server: req.Server, token: req.Token, tls: req.TLS},
 			info: TunnelInfo{
 				StartedAt: time.Now(),
 				Name:      s.Name,
+				Source:    req.Source,
 				Target:    s.Target,
 				Proto:     s.Proto,
 				Status:    StatusStarting,
@@ -203,7 +215,7 @@ func (d *Daemon) launch(ctx context.Context, wg *sync.WaitGroup, spec *tunnel.Sp
 		Token:  req.Token,
 		TLS:    tlsFor(req),
 		OnOnline: func(ts []client.Tunnel) {
-			m.setOnline(ts[0].URL)
+			m.setOnline(&ts[0])
 			logger.Info("tunnel online", "url", ts[0].URL)
 			once.Do(func() { close(m.online) })
 		},
@@ -392,12 +404,35 @@ func (m *managed) runErr() error {
 	return m.err
 }
 
-func (m *managed) setOnline(url string) {
+func (m *managed) setOnline(t *client.Tunnel) {
 	m.mu.Lock()
-	m.info.Status, m.info.URL, m.info.LastError = StatusOnline, url, ""
+	m.info.Status, m.info.URL, m.info.LastError = StatusOnline, t.URL, ""
+	m.assigned = t.Spec
 	m.mu.Unlock()
 
-	m.log.add(slog.LevelInfo, "online at "+url)
+	m.log.add(slog.LevelInfo, "online at "+t.URL)
+}
+
+// keepAddress fills in the subdomain or port the server gave m, so a restarted tunnel keeps its URL.
+// Anything spec asks for itself, or a change of protocol, wins.
+func (m *managed) keepAddress(spec *tunnel.Spec) tunnel.Spec {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kept := *spec
+	if kept.Proto != m.assigned.Proto {
+		return kept
+	}
+
+	if kept.Subdomain == "" {
+		kept.Subdomain = m.assigned.Subdomain
+	}
+
+	if kept.RemotePort == 0 {
+		kept.RemotePort = m.assigned.RemotePort
+	}
+
+	return kept
 }
 
 func (m *managed) setReconnecting(err error, retryIn time.Duration) {

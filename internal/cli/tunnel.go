@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"slices"
 
 	"github.com/spf13/cobra"
 
 	"github.com/aelpxy/parrot/internal/config"
+	"github.com/aelpxy/parrot/internal/daemon"
 	"github.com/aelpxy/parrot/internal/tunnel"
 )
 
@@ -112,6 +114,25 @@ func (a *App) tcpCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *App) downCmd() *cobra.Command {
+	var path string
+
+	cmd := &cobra.Command{
+		Use:     "down",
+		Short:   "Stop background tunnels started from " + config.ProjectFile,
+		GroupID: groupTunnels,
+		Example: "  parrot down\n  parrot down -c staging.toml",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return a.down(cmd.Context(), path)
+		},
+	}
+
+	cmd.Flags().StringVarP(&path, "config", "c", config.ProjectFile, "config file the tunnels were started from")
+
+	return cmd
+}
+
 func (a *App) udpCmd() *cobra.Command {
 	var opts tunnelOptions
 
@@ -139,21 +160,29 @@ func (a *App) upCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "up [name...]",
-		Short:   "Start tunnels from " + config.ProjectFile,
+		Use:   "up [name...]",
+		Short: "Start tunnels from " + config.ProjectFile,
+		Long: "Start tunnels from " + config.ProjectFile + ".\n\n" +
+			"With -d, the background tunnels from the file are made to match it: new ones start, changed ones\n" +
+			"restart, and ones removed from the file stop. Naming tunnels updates just those.",
 		GroupID: groupTunnels,
-		Example: "  parrot up\n  parrot up api db -d",
+		Example: "  parrot up\n  parrot up -d\n  parrot up api db -d",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			specs, err := projectTunnels(path, args)
 			if err != nil {
 				return err
 			}
 
-			if detach {
-				return a.detachTunnels(cmd.Context(), specs)
+			if !detach {
+				return a.runTunnels(cmd.Context(), specs)
 			}
 
-			return a.runTunnels(cmd.Context(), specs)
+			source, err := filepath.Abs(path)
+			if err != nil {
+				return fmt.Errorf("config path: %w", err)
+			}
+
+			return a.applyTunnels(cmd.Context(), path, &daemon.ApplyRequest{Source: source, Specs: specs, Prune: len(args) == 0})
 		},
 		ValidArgsFunction: func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
 			return completeTunnelNames(path)

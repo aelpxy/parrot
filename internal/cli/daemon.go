@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/aelpxy/parrot/internal/config"
 	"github.com/aelpxy/parrot/internal/daemon"
 	"github.com/aelpxy/parrot/internal/tunnel"
 	"github.com/aelpxy/parrot/internal/ui"
@@ -89,7 +91,8 @@ func (a *App) runDaemon(ctx context.Context) error {
 	return nil
 }
 
-// autostart starts the user config's autostart tunnels, retrying until the server is reachable.
+// autostart makes the daemon run exactly the user config's autostart tunnels, retrying until the
+// server is reachable.
 func (a *App) autostart(ctx context.Context, c *daemon.Client, logger *slog.Logger) {
 	cfg, err := loadUserConfig()
 	if err != nil {
@@ -110,10 +113,17 @@ func (a *App) autostart(ctx context.Context, c *daemon.Client, logger *slog.Logg
 		return
 	}
 
-	req := &daemon.StartRequest{Server: opts.Server, Token: opts.Token, TLS: opts.TLS != nil, Specs: specs}
+	source, err := config.UserPath()
+	if err != nil {
+		logger.Warn("autostart skipped", "error", err)
+
+		return
+	}
+
+	req := &daemon.ApplyRequest{Source: source, Server: opts.Server, Token: opts.Token, TLS: opts.TLS != nil, Specs: specs, Prune: true}
 
 	for wait := autostartMinWait; ; wait = min(wait*autostartBackoff, autostartMaxWait) {
-		_, err := c.Start(ctx, req)
+		_, err := c.Apply(ctx, req)
 		if err == nil {
 			logger.Info("autostarted tunnels", "count", len(specs))
 
@@ -138,6 +148,88 @@ func (a *App) autostart(ctx context.Context, c *daemon.Client, logger *slog.Logg
 }
 
 // detachTunnels hands specs to the daemon, starting it first if needed, and returns once they are online.
+// applyTunnels makes the background tunnels from the config at path match req; see daemon.ApplyRequest.
+func (a *App) applyTunnels(ctx context.Context, path string, req *daemon.ApplyRequest) error {
+	opts, err := a.clientOptions()
+	if err != nil {
+		return err
+	}
+
+	c, err := a.startedDaemon(ctx)
+	if err != nil {
+		return err
+	}
+
+	req.Server, req.Token, req.TLS = opts.Server, opts.Token, opts.TLS != nil
+
+	res, err := c.Apply(ctx, req)
+	if err != nil {
+		var apiErr *daemon.APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusConflict {
+			return withHint(err, "rename it in "+path+", or stop the other one with 'parrot stop <name>'")
+		}
+
+		return connectError(err)
+	}
+
+	rows := make([]ui.TunnelRow, 0, len(res.Tunnels))
+	for _, info := range res.Tunnels {
+		rows = append(rows, ui.TunnelRow{Name: info.Name, URL: info.URL, Target: info.Target})
+	}
+
+	a.ui().Online(rows, applySummary(res)+" · 'parrot down' stops them")
+
+	return nil
+}
+
+// applySummary says what an apply changed, such as "started api · stopped db".
+func applySummary(res *daemon.ApplyResult) string {
+	var parts []string
+
+	for _, change := range []struct {
+		verb  string
+		names []string
+	}{{"started", res.Started}, {"restarted", res.Restarted}, {"stopped", res.Stopped}} {
+		if len(change.names) > 0 {
+			parts = append(parts, change.verb+" "+strings.Join(change.names, ", "))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "already up to date"
+	}
+
+	return strings.Join(parts, " · ")
+}
+
+// down stops every background tunnel started from the config at path, even if the file is gone.
+func (a *App) down(ctx context.Context, path string) error {
+	source, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("config path: %w", err)
+	}
+
+	c, err := runningDaemon()
+	if err != nil {
+		return err
+	}
+
+	res, err := c.Apply(ctx, &daemon.ApplyRequest{Source: source, Prune: true})
+	if errors.Is(err, daemon.ErrNotRunning) || (err == nil && len(res.Stopped) == 0) {
+		a.ui().Note("nothing from " + path + " is running")
+
+		return nil
+	}
+
+	if err != nil {
+		return daemonError(err)
+	}
+
+	a.ui().Success("stopped " + strings.Join(res.Stopped, ", "))
+
+	return nil
+}
+
 func (a *App) detachTunnels(ctx context.Context, specs []tunnel.Spec) error {
 	opts, err := a.clientOptions()
 	if err != nil {

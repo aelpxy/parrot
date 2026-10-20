@@ -131,7 +131,7 @@ func (a *App) rootCmd() *cobra.Command {
 	)
 
 	cmd.AddCommand(
-		a.httpCmd(), a.tcpCmd(), a.udpCmd(), a.upCmd(), a.lsCmd(), a.logsCmd(), a.stopCmd(),
+		a.httpCmd(), a.tcpCmd(), a.udpCmd(), a.upCmd(), a.downCmd(), a.lsCmd(), a.logsCmd(), a.stopCmd(),
 		a.loginCmd(), a.logoutCmd(),
 		a.serverCmd(), a.serviceCmd(), a.daemonCmd(),
 		a.speedTestCmd(), versionCmd(),

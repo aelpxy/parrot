@@ -63,6 +63,16 @@ func (c *Client) Start(ctx context.Context, req *StartRequest) ([]TunnelInfo, er
 }
 
 // Stop stops the tunnel called name.
+// Apply makes the daemon's tunnels from req.Source match req; see ApplyRequest.
+func (c *Client) Apply(ctx context.Context, req *ApplyRequest) (*ApplyResult, error) {
+	var res ApplyResult
+	if err := c.call(ctx, http.MethodPost, "/apply", req, &res); err != nil {
+		return nil, err
+	}
+
+	return &res, nil
+}
+
 func (c *Client) Stop(ctx context.Context, name string) error {
 	return c.call(ctx, http.MethodDelete, "/tunnels/"+url.PathEscape(name), nil, nil)
 }

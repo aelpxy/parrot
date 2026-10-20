@@ -91,7 +91,7 @@ vpn = "udp:51820"
 
 ### Background tunnels
 
-Add `-d` to `http`, `tcp`, or `up` and parrot hands the tunnel to a small background daemon, which starts on its own and keeps it running after you close the terminal:
+Add `-d` to `http`, `tcp`, `udp`, or `up` and parrot hands the tunnel to a small background daemon, which starts on its own and keeps it running after you close the terminal:
 
 ```sh
 parrot http 3000 -d         # prints the URL and returns
@@ -101,7 +101,9 @@ parrot logs http-3000 -f    # follow one tunnel's log
 parrot stop http-3000       # or: parrot stop --all
 ```
 
-To bring tunnels back after a reboot, mark them in `~/.config/parrot/config.toml` and install the daemon as a systemd user service (Linux):
+`parrot.toml` is the source of truth for its tunnels. Run `parrot up -d` again after editing it and the background tunnels catch up: new ones start, changed ones restart, and ones you removed stop. A restarted tunnel keeps its URL unless you change its subdomain or port. `parrot up -d web` updates just the tunnels you name, and `parrot down` stops everything that came from the file. Tunnels started on their own, like `parrot http 3000 -d`, are never touched.
+
+To bring tunnels back after a reboot, mark them in `~/.config/parrot/config.toml` and install the daemon as a systemd user service (Linux). At every start the daemon runs exactly the tunnels marked `autostart`:
 
 ```toml
 [tunnels.web]
@@ -163,6 +165,24 @@ sudo parrot server cert --domain example.com
 sudo parrot service install --server -- --domain example.com
 sudo parrot server token create --name laptop
 ```
+
+### With a config file
+
+Every server flag can live in a file instead, with dashes turned into underscores. Unknown keys are errors, so typos don't go unnoticed, and flags given on the command line still win:
+
+```toml
+# /etc/parrot/server.toml
+domain = "example.com"
+tcp_ports = "30000-40000"
+allow_anonymous = true
+ssh_on_https = true
+```
+
+```sh
+sudo parrot service install --server -- --config /etc/parrot/server.toml
+```
+
+After editing the file, run `sudo systemctl restart parrot-server`. The `token` and `cert` commands read `data_dir` from the same file when given `--config`. Tokens stay out of it: they are secrets, kept hashed and managed with `parrot server token`.
 
 `sudo parrot service status --server` shows whether it is running, and `journalctl -u parrot-server -f` follows its logs.
 

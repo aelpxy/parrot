@@ -29,7 +29,7 @@ func TestRun(t *testing.T) {
 		wantStderr string
 	}{
 		{name: "help", args: []string{"--help"}, wantStdout: "Expose local services"},
-		{name: "help groups commands", args: []string{"--help"}, wantStdout: "TUNNELS\n  http"},
+		{name: "help groups commands", args: []string{"--help"}, wantStdout: "TUNNELS\n  down"},
 		{name: "subcommand help", args: []string{"tcp", "--help"}, wantStdout: "-p, --remote-port int"},
 		{name: "help command", args: []string{"help", "server"}, wantStdout: "--tls-cert string"},
 		{name: "version", args: []string{"version"}, wantStdout: "parrot "},

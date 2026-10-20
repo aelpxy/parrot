@@ -61,18 +61,42 @@ func (s *Status) UnmarshalText(b []byte) error {
 	return fmt.Errorf("unknown status %q", b)
 }
 
-// StartRequest asks the daemon to run specs against a server.
+// StartRequest asks the daemon to run specs against a server. Source names the config file the
+// specs came from, or is empty for tunnels started directly from the command line.
 type StartRequest struct {
+	Source string        `json:"source,omitzero"`
 	Server string        `json:"server"`
 	Token  string        `json:"token,omitzero"`
 	Specs  []tunnel.Spec `json:"specs"`
 	TLS    bool          `json:"tls,omitzero"`
 }
 
+// ApplyRequest makes the running tunnels from Source match Specs: new ones start, changed ones
+// restart, and unchanged ones keep running. With Prune, tunnels from Source that are no longer
+// listed stop too. Tunnels from other sources are never touched.
+type ApplyRequest struct {
+	Source string        `json:"source"`
+	Server string        `json:"server"`
+	Token  string        `json:"token,omitzero"`
+	Specs  []tunnel.Spec `json:"specs"`
+	TLS    bool          `json:"tls,omitzero"`
+	Prune  bool          `json:"prune,omitzero"`
+}
+
+// ApplyResult reports what an apply changed, by tunnel name, and the listed tunnels as they now run.
+type ApplyResult struct {
+	Started   []string     `json:"started,omitzero"`
+	Restarted []string     `json:"restarted,omitzero"`
+	Stopped   []string     `json:"stopped,omitzero"`
+	Unchanged []string     `json:"unchanged,omitzero"`
+	Tunnels   []TunnelInfo `json:"tunnels"`
+}
+
 // TunnelInfo describes a running background tunnel.
 type TunnelInfo struct {
 	StartedAt time.Time    `json:"started_at"`
 	Name      string       `json:"name"`
+	Source    string       `json:"source,omitzero"`
 	URL       string       `json:"url,omitzero"`
 	Target    string       `json:"target"`
 	LastError string       `json:"last_error,omitzero"`
