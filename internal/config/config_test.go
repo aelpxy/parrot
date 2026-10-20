@@ -27,10 +27,12 @@ func TestLoad(t *testing.T) {
 web = 3000
 db = "tcp:5432"
 lan = "192.168.1.10:8080"
+vpn = "udp:51820"
 `,
 			want: []tunnel.Spec{
 				{Name: "db", Proto: tunnel.TCP, Target: "localhost:5432"},
 				{Name: "lan", Proto: tunnel.HTTP, Target: "192.168.1.10:8080"},
+				{Name: "vpn", Proto: tunnel.UDP, Target: "localhost:51820"},
 				{Name: "web", Proto: tunnel.HTTP, Target: "localhost:3000"},
 			},
 		},
@@ -56,7 +58,7 @@ autostart = true
 		},
 		{name: "unknown top-level key", in: `tokn = "x"`, wantErr: `unknown key "tokn"`},
 		{name: "unknown tunnel key", in: "[tunnels.web]\ntarget = 1\nport = 2", wantErr: `unknown key "tunnels.web.port"`},
-		{name: "bad proto", in: "[tunnels.web]\nproto = \"udp\"\ntarget = 1", wantErr: "unknown protocol"},
+		{name: "bad proto", in: "[tunnels.web]\nproto = \"quic\"\ntarget = 1", wantErr: "unknown protocol"},
 		{name: "bad target", in: "[tunnels]\nweb = 70000", wantErr: "invalid target"},
 		{name: "bad target type", in: "[tunnels]\nweb = true", wantErr: "expected a port"},
 		{name: "tcp with subdomain", in: "[tunnels.db]\nproto = \"tcp\"\ntarget = 1\nsubdomain = \"x\"", wantErr: "only supported for http"},

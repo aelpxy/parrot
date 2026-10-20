@@ -33,6 +33,7 @@ A public parrot server runs at `tryparrot.site` and accepts clients without a to
 export PARROT_SERVER=tryparrot.site
 parrot http 3000            # https://<random-name>.tryparrot.site
 parrot tcp 5432             # tcp://tryparrot.site:<port>
+parrot udp 51820            # udp://tryparrot.site:<port>
 ```
 
 To use it by default, put `server = "tryparrot.site"` in `~/.config/parrot/config.toml` instead of exporting the variable.
@@ -71,6 +72,7 @@ parrot                      # pick a listening local port interactively
 parrot http 3000            # expose an HTTP app
 parrot http 3000 -s myapp   # with a fixed subdomain
 parrot tcp 5432             # expose a raw TCP service
+parrot udp 51820            # expose a UDP service, such as WireGuard or a game server
 parrot http 3000 -d         # run in the background
 parrot ls                   # list background tunnels
 parrot logs http-3000 -f    # follow a tunnel's log
@@ -84,6 +86,7 @@ Tunnels you start often can live in a `parrot.toml` and run with `parrot up`:
 [tunnels]
 web = 3000
 db  = "tcp:5432"
+vpn = "udp:51820"
 ```
 
 ### Background tunnels
@@ -119,7 +122,7 @@ Run `parrot --help` or `parrot <command> --help` for everything else.
 
 ## Run a server
 
-You need a domain whose apex and wildcard (`example.com` and `*.example.com`) point at your server, with these TCP ports open: `80`, `443`, `7000`, and the range used for TCP tunnels.
+You need a domain whose apex and wildcard (`example.com` and `*.example.com`) point at your server, with these TCP ports open: `80`, `443`, `7000`, and the range used for TCP tunnels. UDP tunnels use the same range, so open it for UDP as well if you want them.
 
 ### With Docker
 
@@ -136,7 +139,7 @@ Images for `linux/amd64` and `linux/arm64` are published to `ghcr.io/aelpxy/parr
    ```sh
    docker run -d --name parrot --restart unless-stopped \
      -v parrot-data:/data \
-     -p 80:80 -p 443:443 -p 7000:7000 -p 30000-30100:30000-30100 \
+     -p 80:80 -p 443:443 -p 7000:7000 -p 30000-30100:30000-30100 -p 30000-30100:30000-30100/udp \
      ghcr.io/aelpxy/parrot server --domain example.com --tcp-ports 30000-30100
    ```
 

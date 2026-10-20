@@ -133,3 +133,47 @@ func TestStreamHeader(t *testing.T) {
 		})
 	}
 }
+
+func TestDatagramFraming(t *testing.T) {
+	t.Parallel()
+
+	packets := [][]byte{[]byte("ping"), {}, bytes.Repeat([]byte{0xff}, protocol.MaxDatagram)}
+
+	var stream bytes.Buffer
+
+	for _, p := range packets {
+		if err := protocol.WriteDatagram(&stream, p); err != nil {
+			t.Fatalf("WriteDatagram(%d bytes) error: %v", len(p), err)
+		}
+	}
+
+	buf := make([]byte, protocol.MaxDatagram)
+
+	for i, want := range packets {
+		n, err := protocol.ReadDatagram(&stream, buf)
+		if err != nil {
+			t.Fatalf("ReadDatagram() packet %d error: %v", i, err)
+		}
+
+		if !bytes.Equal(buf[:n], want) {
+			t.Errorf("packet %d = %d bytes, want %d", i, n, len(want))
+		}
+	}
+
+	if err := protocol.WriteDatagram(&stream, make([]byte, protocol.MaxDatagram+1)); err == nil {
+		t.Error("WriteDatagram() accepted an oversized packet")
+	}
+}
+
+func TestWelcomeSupports(t *testing.T) {
+	t.Parallel()
+
+	var old *protocol.Welcome
+	if old.Supports(protocol.FeatureUDP) {
+		t.Error("a server without a welcome payload claims udp support")
+	}
+
+	if !(&protocol.Welcome{Features: []string{protocol.FeatureUDP}}).Supports(protocol.FeatureUDP) {
+		t.Error("Supports() missed a listed feature")
+	}
+}

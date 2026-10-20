@@ -3,7 +3,8 @@
 // A client opens one multiplexed session per server. The first stream it opens is the
 // control stream, carrying JSON messages. Every other stream is opened by the server for
 // a single public connection, or for a speed test the client asked for, and starts with a
-// binary StreamHeader, followed by raw bytes.
+// binary StreamHeader, followed by raw bytes. A UDP tunnel's stream carries one remote sender's
+// packets, each framed by WriteDatagram.
 package protocol
 
 import (
@@ -15,6 +16,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"slices"
 
 	"github.com/hashicorp/yamux"
 
@@ -74,18 +76,33 @@ var (
 
 // Message is a single control message; exactly one payload matching Kind is set.
 type Message struct {
-	Hello *Hello `json:"hello,omitzero"`
-	Bind  *Bind  `json:"bind,omitzero"`
-	Bound *Bound `json:"bound,omitzero"`
-	Speed *Speed `json:"speed,omitzero"`
-	Error string `json:"error,omitzero"`
-	Kind  Kind   `json:"kind"`
+	Hello   *Hello   `json:"hello,omitzero"`
+	Bind    *Bind    `json:"bind,omitzero"`
+	Bound   *Bound   `json:"bound,omitzero"`
+	Speed   *Speed   `json:"speed,omitzero"`
+	Welcome *Welcome `json:"welcome,omitzero"`
+	Error   string   `json:"error,omitzero"`
+	Kind    Kind     `json:"kind"`
 }
 
 // Hello is the first message a client sends.
 type Hello struct {
 	Token   string `json:"token,omitzero"`
 	Version int    `json:"version"`
+}
+
+// FeatureUDP is advertised by servers that accept UDP tunnels.
+const FeatureUDP = "udp"
+
+// Welcome accepts a client and lists optional features the server supports. Servers from before
+// features existed send no Welcome payload at all.
+type Welcome struct {
+	Features []string `json:"features,omitzero"`
+}
+
+// Supports reports whether w lists feature; a nil Welcome supports nothing optional.
+func (w *Welcome) Supports(feature string) bool {
+	return w != nil && slices.Contains(w.Features, feature)
 }
 
 // Bind asks the server to expose a tunnel.
@@ -256,4 +273,45 @@ func readString(r io.Reader) (string, error) {
 	}
 
 	return string(buf), nil
+}
+
+// MaxDatagram is the largest UDP payload a tunnel carries, the most a 2-byte length can describe.
+const MaxDatagram = math.MaxUint16
+
+// datagramHeader is the size of each datagram's big-endian length prefix.
+const datagramHeader = 2
+
+// WriteDatagram writes p as one length-prefixed frame, in a single write so frames never interleave.
+func WriteDatagram(w io.Writer, p []byte) error {
+	if len(p) > MaxDatagram {
+		return fmt.Errorf("datagram of %d bytes is over the %d byte limit", len(p), MaxDatagram)
+	}
+
+	frame := make([]byte, datagramHeader, datagramHeader+len(p))
+	binary.BigEndian.PutUint16(frame, uint16(len(p)))
+
+	if _, err := w.Write(append(frame, p...)); err != nil {
+		return fmt.Errorf("write datagram: %w", err)
+	}
+
+	return nil
+}
+
+// ReadDatagram reads the next frame into buf, which should hold MaxDatagram bytes, and returns its length.
+func ReadDatagram(r io.Reader, buf []byte) (int, error) {
+	var size [datagramHeader]byte
+	if _, err := io.ReadFull(r, size[:]); err != nil {
+		return 0, fmt.Errorf("read datagram: %w", err)
+	}
+
+	n := int(binary.BigEndian.Uint16(size[:]))
+	if n > len(buf) {
+		return 0, fmt.Errorf("datagram of %d bytes does not fit a %d byte buffer", n, len(buf))
+	}
+
+	if _, err := io.ReadFull(r, buf[:n]); err != nil {
+		return 0, fmt.Errorf("read datagram: %w", err)
+	}
+
+	return n, nil
 }

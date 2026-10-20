@@ -87,6 +87,7 @@ type Server struct {
 	mu       sync.Mutex
 	hosts    map[string]*httpTunnel
 	ports    map[int]bool
+	udpPorts map[int]bool
 	sessions map[*session]struct{}
 	closing  bool
 }
@@ -130,6 +131,7 @@ func New(opts *Options) (*Server, error) {
 		opts:       *opts,
 		hosts:      make(map[string]*httpTunnel),
 		ports:      make(map[int]bool),
+		udpPorts:   make(map[int]bool),
 		sessions:   make(map[*session]struct{}),
 	}, nil
 }

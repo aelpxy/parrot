@@ -17,6 +17,7 @@ const (
 	ProtoInvalid Proto = iota
 	HTTP
 	TCP
+	UDP
 )
 
 const (
@@ -40,16 +41,18 @@ type Spec struct {
 	Autostart  bool   `json:"autostart,omitzero"`
 }
 
-// ParseProto parses "http" or "tcp".
+// ParseProto parses "http", "tcp", or "udp".
 func ParseProto(s string) (Proto, error) {
 	switch s {
 	case "http":
 		return HTTP, nil
 	case "tcp":
 		return TCP, nil
+	case "udp":
+		return UDP, nil
 	}
 
-	return ProtoInvalid, fmt.Errorf("unknown protocol %q, expected http or tcp", s)
+	return ProtoInvalid, fmt.Errorf("unknown protocol %q, expected http, tcp, or udp", s)
 }
 
 // MarshalText implements encoding.TextMarshaler.
@@ -79,6 +82,8 @@ func (p Proto) String() string {
 		return "http"
 	case TCP:
 		return "tcp"
+	case UDP:
+		return "udp"
 	case ProtoInvalid:
 	}
 
@@ -117,8 +122,8 @@ func (s *Spec) Normalize() error {
 	switch s.Proto {
 	case HTTP:
 		errs = append(errs, s.validateHTTP()...)
-	case TCP:
-		errs = append(errs, s.validateTCP()...)
+	case TCP, UDP:
+		errs = append(errs, s.validatePort()...)
 	case ProtoInvalid:
 		errs = append(errs, errors.New("missing protocol"))
 	}
@@ -144,7 +149,8 @@ func (s *Spec) validateHTTP() []error {
 	return errs
 }
 
-func (s *Spec) validateTCP() []error {
+// validatePort checks options for tunnels that expose a raw port, which only HTTP-specific options can't use.
+func (s *Spec) validatePort() []error {
 	var errs []error
 
 	if s.Subdomain != "" {

@@ -95,25 +95,39 @@ func (s *Server) listenTCP(ctx context.Context, requested int) (net.Listener, in
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	r := s.opts.TCPPorts
+	return allocatePort(ctx, s.opts.TCPPorts, s.ports, requested, listenPort)
+}
+
+// listenUDP is listenTCP for UDP; the two protocols have separate port spaces.
+func (s *Server) listenUDP(ctx context.Context, requested int) (net.PacketConn, int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return allocatePort(ctx, s.opts.TCPPorts, s.udpPorts, requested, listenUDPPort)
+}
+
+// allocatePort opens requested in r, or a random free port in r when requested is zero, marking it
+// used. The caller holds the lock guarding used.
+func allocatePort[T any](ctx context.Context, r PortRange, used map[int]bool, requested int, open func(context.Context, int) (T, error)) (T, int, error) {
+	var zero T
 
 	if requested != 0 {
 		if !r.contains(requested) {
-			return nil, 0, fmt.Errorf("port %d is outside the server's range %s", requested, r)
+			return zero, 0, fmt.Errorf("port %d is outside the server's range %s", requested, r)
 		}
 
-		if s.ports[requested] {
-			return nil, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
+		if used[requested] {
+			return zero, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
 		}
 
-		ln, err := listenPort(ctx, requested)
+		conn, err := open(ctx, requested)
 		if err != nil {
-			return nil, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
+			return zero, 0, fmt.Errorf("port %d is %w", requested, ErrUnavailable)
 		}
 
-		s.ports[requested] = true
+		used[requested] = true
 
-		return ln, requested, nil
+		return conn, requested, nil
 	}
 
 	size := r.Last - r.First + 1
@@ -121,21 +135,21 @@ func (s *Server) listenTCP(ctx context.Context, requested int) (net.Listener, in
 
 	for i := range size {
 		port := r.First + (start+i)%size
-		if s.ports[port] {
+		if used[port] {
 			continue
 		}
 
-		if ln, err := listenPort(ctx, port); err == nil {
-			s.ports[port] = true
+		if conn, err := open(ctx, port); err == nil {
+			used[port] = true
 
-			return ln, port, nil
+			return conn, port, nil
 		}
 	}
 
-	return nil, 0, errors.New("no free tcp ports")
+	return zero, 0, errors.New("no free ports")
 }
 
-func (s *Server) release(subdomains []string, ports []int) {
+func (s *Server) release(subdomains []string, tcpPorts, udpPorts []int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -143,8 +157,12 @@ func (s *Server) release(subdomains []string, ports []int) {
 		delete(s.hosts, sub)
 	}
 
-	for _, port := range ports {
+	for _, port := range tcpPorts {
 		delete(s.ports, port)
+	}
+
+	for _, port := range udpPorts {
+		delete(s.udpPorts, port)
 	}
 }
 
@@ -157,4 +175,15 @@ func listenPort(ctx context.Context, port int) (net.Listener, error) {
 	}
 
 	return ln, nil
+}
+
+func listenUDPPort(ctx context.Context, port int) (net.PacketConn, error) {
+	var lc net.ListenConfig
+
+	pc, err := lc.ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
+	if err != nil {
+		return nil, fmt.Errorf("listen udp %d: %w", port, err)
+	}
+
+	return pc, nil
 }

@@ -54,7 +54,9 @@ type session struct {
 	names      map[string]bool
 	subdomains []string
 	ports      []int
+	udpPorts   []int
 	listeners  []net.Listener
+	packets    []net.PacketConn
 	tunnels    []*httpTunnel
 	wg         sync.WaitGroup
 	anonymous  bool
@@ -190,7 +192,8 @@ func (ss *session) handshake(ctrl *protocol.Control) error {
 		return &rejectError{reason: reject}
 	}
 
-	if err := ctrl.Send(&protocol.Message{Kind: protocol.KindWelcome}); err != nil {
+	welcome := &protocol.Welcome{Features: []string{protocol.FeatureUDP}}
+	if err := ctrl.Send(&protocol.Message{Kind: protocol.KindWelcome, Welcome: welcome}); err != nil {
 		return fmt.Errorf("handshake: %w", err)
 	}
 
@@ -273,6 +276,8 @@ func (ss *session) bind(ctx context.Context, b *protocol.Bind) (*protocol.Bound,
 		bound, err = ss.bindHTTP(b)
 	case tunnel.TCP:
 		bound, err = ss.bindTCP(ctx, b)
+	case tunnel.UDP:
+		bound, err = ss.bindUDP(ctx, b)
 	case tunnel.ProtoInvalid:
 		err = errors.New("missing protocol")
 	}
@@ -329,6 +334,25 @@ func (ss *session) bindTCP(ctx context.Context, b *protocol.Bind) (*protocol.Bou
 	}, nil
 }
 
+func (ss *session) bindUDP(ctx context.Context, b *protocol.Bind) (*protocol.Bound, error) {
+	pc, port, err := ss.srv.listenUDP(ctx, b.RemotePort)
+	if err != nil {
+		return nil, err
+	}
+
+	ss.udpPorts = append(ss.udpPorts, port)
+	ss.packets = append(ss.packets, pc)
+
+	open := func(sender string) (net.Conn, error) { return ss.client.open(b.Name, sender) }
+	ss.wg.Go(newUDPRelay(pc, open, ss.logger.With("tunnel", b.Name)).run)
+
+	return &protocol.Bound{
+		Name:       b.Name,
+		URL:        "udp://" + net.JoinHostPort(ss.srv.domain, strconv.Itoa(port)),
+		RemotePort: port,
+	}, nil
+}
+
 func (ss *session) acceptTCP(ln net.Listener, name string) {
 	for {
 		conn, err := accept(ln, ss.client.done(), ss.logger)
@@ -358,12 +382,18 @@ func (ss *session) forwardTCP(conn net.Conn, name string) {
 
 // close releases everything the session holds and waits for its connections to finish.
 func (ss *session) close() {
-	ss.srv.release(ss.subdomains, ss.ports)
+	ss.srv.release(ss.subdomains, ss.ports, ss.udpPorts)
 	ss.disconnect()
 
 	for _, ln := range ss.listeners {
 		if err := ln.Close(); err != nil {
 			ss.logger.Debug("close tcp listener failed", "error", err)
+		}
+	}
+
+	for _, pc := range ss.packets {
+		if err := pc.Close(); err != nil {
+			ss.logger.Debug("close udp socket failed", "error", err)
 		}
 	}
 

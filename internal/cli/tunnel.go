@@ -112,6 +112,26 @@ func (a *App) tcpCmd() *cobra.Command {
 	return cmd
 }
 
+func (a *App) udpCmd() *cobra.Command {
+	var opts tunnelOptions
+
+	cmd := &cobra.Command{
+		Use:     "udp <target>",
+		Short:   "Expose a local UDP service",
+		GroupID: groupTunnels,
+		Example: "  parrot udp 51820\n  parrot udp 27015 -p 37015 -d",
+		Args:    requireTarget("parrot udp 51820"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.startTunnel(cmd.Context(), tunnel.UDP, args[0], &opts)
+		},
+	}
+
+	addCommonFlags(cmd, &opts)
+	cmd.Flags().IntVarP(&opts.remotePort, "remote-port", "p", 0, "request a public port")
+
+	return cmd
+}
+
 func (a *App) upCmd() *cobra.Command {
 	var (
 		detach bool

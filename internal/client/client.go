@@ -31,8 +31,13 @@ const (
 	jitterFraction   = 5
 )
 
-// ErrRejected is returned when the server refuses the handshake, e.g. for a revoked token; retrying cannot fix it.
-var ErrRejected = errors.New("rejected by server")
+var (
+	// ErrRejected is returned when the server refuses the handshake, e.g. for a revoked token; retrying cannot fix it.
+	ErrRejected = errors.New("rejected by server")
+
+	// ErrUDPUnsupported is returned when a UDP tunnel is asked of a server too old to carry one.
+	ErrUDPUnsupported = errors.New("server does not support udp tunnels")
+)
 
 // Options configures Run. The callbacks are optional and called from Run's goroutines.
 type Options struct {
@@ -69,9 +74,10 @@ type Tunnel struct {
 }
 
 type runner struct {
-	opts   *Options
-	logger *slog.Logger
-	specs  []tunnel.Spec
+	opts    *Options
+	logger  *slog.Logger
+	specs   []tunnel.Spec
+	welcome *protocol.Welcome
 }
 
 // Check connects to the server and verifies the token without binding any tunnels.
@@ -114,7 +120,7 @@ func Run(ctx context.Context, opts *Options, specs []tunnel.Spec) error {
 		default:
 		}
 
-		if (!everOnline && !online) || errors.Is(err, ErrRejected) {
+		if (!everOnline && !online) || errors.Is(err, ErrRejected) || errors.Is(err, ErrUDPUnsupported) {
 			return err
 		}
 
@@ -206,13 +212,16 @@ func (r *runner) handshake(mux *yamux.Session) (*protocol.Control, net.Conn, err
 	ctrl := protocol.NewControl(stream)
 	hello := &protocol.Message{Kind: protocol.KindHello, Hello: &protocol.Hello{Version: protocol.Version, Token: r.opts.Token}}
 
-	if _, err := ctrl.Request(hello, protocol.KindWelcome); err != nil {
+	reply, err := ctrl.Request(hello, protocol.KindWelcome)
+	if err != nil {
 		if _, ok := errors.AsType[*protocol.RemoteError](err); ok {
 			return nil, nil, fmt.Errorf("handshake: %w: %w", ErrRejected, err)
 		}
 
 		return nil, nil, fmt.Errorf("handshake: %w", err)
 	}
+
+	r.welcome = reply.Welcome
 
 	return ctrl, stream, nil
 }
@@ -222,6 +231,12 @@ func (r *runner) setup(mux *yamux.Session) ([]Tunnel, error) {
 	ctrl, stream, err := r.handshake(mux)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, spec := range r.specs {
+		if spec.Proto == tunnel.UDP && !r.welcome.Supports(protocol.FeatureUDP) {
+			return nil, fmt.Errorf("tunnel %s: %w", spec.Name, ErrUDPUnsupported)
+		}
 	}
 
 	tunnels := make([]Tunnel, 0, len(r.specs))
@@ -288,13 +303,17 @@ func (r *runner) handleStream(ctx context.Context, stream net.Conn, specs map[st
 		return
 	}
 
+	if spec.Proto == tunnel.UDP {
+		r.handleUDP(ctx, stream, &spec)
+
+		return
+	}
+
 	d := net.Dialer{Timeout: localDialTimeout}
 
 	local, err := d.DialContext(ctx, "tcp", spec.Target)
 	if err != nil {
-		if r.opts.OnStreamError != nil {
-			r.opts.OnStreamError(spec.Name, &LocalError{Err: err, Target: spec.Target})
-		}
+		r.localError(&spec, err)
 
 		if spec.Proto == tunnel.HTTP {
 			writeBadGateway(stream, spec.Target)
