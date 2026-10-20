@@ -26,6 +26,11 @@ import (
 // Version is the protocol version spoken by this build.
 const Version = 1
 
+// maxStreamWindow is how much a stream may have in flight. A stream moves at most one window per
+// round trip, so yamux's 256 KiB default capped tunnels near 5 Mbit/s at 400 ms; 4 MiB measured
+// 42 Mbit/s down and 77 Mbit/s up there. A receiver that reads slowly buffers up to this per stream.
+const maxStreamWindow = 4 << 20
+
 // maxMessageSize bounds one control message so a peer cannot make us buffer without limit.
 const maxMessageSize = 64 << 10
 
@@ -250,6 +255,7 @@ func ReadStreamHeader(r io.Reader) (StreamHeader, error) {
 func MuxConfig(logger *slog.Logger) *yamux.Config {
 	cfg := yamux.DefaultConfig()
 	cfg.LogOutput = nil
+	cfg.MaxStreamWindowSize = maxStreamWindow
 	cfg.Logger = slog.NewLogLogger(logger.Handler(), slog.LevelDebug)
 
 	return cfg
