@@ -14,15 +14,15 @@ func TestWaitForRecords(t *testing.T) {
 	t.Parallel()
 
 	records := []Record{
-		{Name: "_acme-challenge.tryparrot.site", Value: "apex"},
-		{Name: "_acme-challenge.tryparrot.site", Value: "wildcard"},
+		{Name: "_acme-challenge.example.com", Value: "apex"},
+		{Name: "_acme-challenge.example.com", Value: "wildcard"},
 	}
 
 	var calls atomic.Int32
 
 	// The first check sees one record, the second sees both, as if the user added them one by one.
 	lookup := func(_ context.Context, name string) ([]string, error) {
-		if name != "_acme-challenge.tryparrot.site" {
+		if name != "_acme-challenge.example.com" {
 			return nil, errors.New("unexpected name " + name)
 		}
 

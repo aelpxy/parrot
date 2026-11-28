@@ -1,35 +1,15 @@
 # Using parrot
 
-## The public server
-
-`tryparrot.site` accepts clients without a token. Point parrot at it once:
-
-```sh
-export PARROT_SERVER=tryparrot.site
-```
-
-or put `server = "tryparrot.site"` in `~/.config/parrot/config.toml` to make it the default.
-
-```sh
-parrot http 3000            # https://<random-name>.tryparrot.site
-parrot tcp 5432             # tcp://tryparrot.site:<port>
-parrot udp 51820            # udp://tryparrot.site:<port>
-```
-
-- Anyone with the URL can reach your tunnel. Add `--auth user:pass` to require a login on an HTTP tunnel.
-- Subdomains requested with `-s` are first come, first served.
-- Browsers see a short "you're visiting a site run by someone else" page the first time they open a tunnel that was opened without a token. API calls, webhooks, and `curl` are not affected, and a program can skip it by sending a `Parrot-Skip-Warning` header.
-
 ## Tunnels over SSH
 
 Any computer with `ssh`, Windows 10 and later included, can open a tunnel without installing parrot:
 
 ```sh
-ssh -p 443 -R0:localhost:3000 tryparrot.site              # HTTP tunnel with a random name
-ssh -p 443 -R myapp:80:localhost:3000 tryparrot.site      # ask for myapp.tryparrot.site
-ssh -p 443 -R0:localhost:3000 qr@tryparrot.site           # also show a QR code to open it on a phone
-ssh -p 443 -R0:localhost:5432 tcp@tryparrot.site          # raw TCP tunnel
-ssh -p 443 -R0:localhost:3000 prt_...@tryparrot.site      # with a token
+ssh -p 443 -R0:localhost:3000 example.com              # HTTP tunnel with a random name
+ssh -p 443 -R myapp:80:localhost:3000 example.com      # ask for myapp.example.com
+ssh -p 443 -R0:localhost:3000 qr@example.com           # also show a QR code to open it on a phone
+ssh -p 443 -R0:localhost:5432 tcp@example.com          # raw TCP tunnel
+ssh -p 443 -R0:localhost:3000 prt_...@example.com      # with a token
 ```
 
 The URL appears in your terminal, and the tunnel lasts until you press ctrl+c. Options in the username combine with `+`, as in `prt_...+qr@`. UDP needs the parrot client.

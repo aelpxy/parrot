@@ -31,13 +31,13 @@ func TestLoadServerFile(t *testing.T) {
 		{
 			name: "full",
 			in: `
-domain = "tryparrot.site"
+domain = "example.com"
 tcp_ports = "30000-40000"
 data_dir = "/var/lib/parrot"
 allow_anonymous = true
 ssh_on_https = true
 `,
-			want: config.Server{Domain: "tryparrot.site", TCPPorts: "30000-40000", DataDir: "/var/lib/parrot", AllowAnonymous: true, SSHOnHTTPS: true},
+			want: config.Server{Domain: "example.com", TCPPorts: "30000-40000", DataDir: "/var/lib/parrot", AllowAnonymous: true, SSHOnHTTPS: true},
 		},
 		{name: "empty", in: "", want: config.Server{}},
 	}

@@ -10,7 +10,7 @@ import (
 func TestLines(t *testing.T) {
 	t.Parallel()
 
-	lines, err := qrterm.Lines("https://brave-otter-k3j9x2mq.tryparrot.site")
+	lines, err := qrterm.Lines("https://brave-otter-k3j9x2mq.example.com")
 	if err != nil {
 		t.Fatalf("Lines() error: %v", err)
 	}

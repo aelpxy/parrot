@@ -6,7 +6,7 @@ Expose local services to the internet over HTTPS, TCP, or UDP.
 $ parrot http 3000
  parrot   ● online
 
-  http-3000  https://brave-otter-k3j9x2mq.tryparrot.site  → localhost:3000
+  http-3000  https://brave-otter-k3j9x2mq.example.com  → localhost:3000
 ```
 
 ## Install
@@ -16,23 +16,6 @@ curl -fsSL https://raw.githubusercontent.com/aelpxy/parrot/main/install.sh | sh
 ```
 
 Linux and macOS, amd64 and arm64. Binaries are also on the [releases page](../../releases).
-
-## Try it
-
-A public server runs at `tryparrot.site`, no account needed:
-
-```sh
-export PARROT_SERVER=tryparrot.site
-parrot http 3000
-```
-
-No install? Any computer with `ssh` works too:
-
-```sh
-ssh -p 443 -R0:localhost:3000 tryparrot.site
-```
-
-Anyone with the URL can reach your tunnel, so don't expose anything you wouldn't put on the open internet.
 
 ## Use
 
@@ -61,7 +44,7 @@ db  = "tcp:5432"
 
 ## More
 
-- [Using parrot](docs/usage.md): the public server, SSH tunnels, background tunnels, starting at login, and other servers.
+- [Using parrot](docs/usage.md): SSH tunnels, background tunnels, starting at login, and other servers.
 - [Running your own server](docs/self-hosting.md): Docker, systemd, config files, and certificates.
 - `parrot --help` and `parrot <command> --help` cover every flag.
 
